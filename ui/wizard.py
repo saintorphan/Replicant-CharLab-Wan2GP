@@ -227,17 +227,20 @@ def _wire_persistence(comps, settings, poses_state, init):
 
     # --- Clear Wizard: reset everything + wipe persisted state/files ---
     clear_btn = comps["info"].get("clear_btn")
+    clear_files = comps["info"].get("clear_files")
     if clear_btn is not None:
         import shutil
         clear_outputs = fields + img_comps + ([gal] if gal is not None else []) + [poses_state]
 
-        def _clear():
-            wizard_state.clear()
-            shutil.rmtree(_persist_dir(), ignore_errors=True)
+        def _clear(delete_files):
+            wizard_state.clear()  # always reset the form state
+            if delete_files:      # also delete the unsaved generation files on disk
+                for sub in ("persist", "sd_gen", "poses", "swap"):
+                    shutil.rmtree(paths.cache_dir() / sub, ignore_errors=True)
             return ([defaults[k] for k in keys]
                     + [None] * len(img_comps) + ([None] if gal is not None else [])
                     + [{"poses": [], "specs": []}])
-        clear_btn.click(_clear, outputs=clear_outputs)
+        clear_btn.click(_clear, inputs=[clear_files], outputs=clear_outputs)
 
 
 def _summary(cs, cdir) -> str:
