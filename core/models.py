@@ -44,7 +44,7 @@ REGISTRY: list[ModelSpec] = [
         subpath="face/inswapper_128.onnx",
         purpose="Face swap onto the base image + base-face→poses identity lock.",
         required=True,
-        url="https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/inswapper_128.onnx",
+        url="https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/inswapper_128.onnx",
     ),
     ModelSpec(
         key="gfpgan", name="GFPGAN v1.4 (face enhancer)",
