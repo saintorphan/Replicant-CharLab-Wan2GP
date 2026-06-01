@@ -92,3 +92,30 @@ def parse_model_value(value: str) -> tuple[str, str]:
         return "", ""
     backend, _, ident = value.partition("::")
     return backend, ident
+
+
+def categorize_lora(name: str) -> str:
+    """Same name-based family bucket as checkpoints (Pony/Illustrious/SDXL)."""
+    return categorize_sdxl(name)
+
+
+def model_family(model_value: str) -> str | None:
+    """The SD family of the selected model (Pony/Illustrious/SDXL), or None for
+    native models (Flux/Z-Image/Qwen) — which the SDXL LoRAs don't apply to."""
+    backend, ident = parse_model_value(model_value)
+    if backend == "sd":
+        return categorize_sdxl(Path(ident).stem)
+    return None
+
+
+def lora_choices(loras_dir=None, family: str | None = None) -> list:
+    """Categorized LoRA dropdown choices, optionally filtered to one family.
+    SDXL/Pony/Illustrious LoRAs are NOT cross-compatible, so when a model is
+    selected we show only its family."""
+    out = []
+    for m in discover_sdxl_loras(loras_dir):
+        cat = categorize_lora(m["name"])
+        if family and cat != family:
+            continue
+        out.append((f"{cat} · {m['name']}", m["path"]))
+    return out

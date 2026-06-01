@@ -123,8 +123,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
 
 # Fields autosaved/restored. Keyed "<group>.<name>"; "settings.*" come from the bar.
 _PERSIST_SPEC = {
-    "info": ["name", "description", "style", "reference_image", "selected_loras",
-             "lora_multipliers", "lora_trigger_words"],
+    "info": ["name", "description", "style", "reference_image"],
     "prompt": ["positive_prompt", "negative_prompt"],
     "base": ["count", "selected_base"],
     "settings": ["model", "sampler", "scheduler", "steps", "cfg_scale", "clip_skip",

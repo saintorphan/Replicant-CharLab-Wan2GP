@@ -38,19 +38,19 @@ def build_info(visible: bool):
                                              choices=paths.list_characters(), scale=4)
             c["load_btn"] = gr.Button("Load", scale=0, min_width=90)
             c["refresh_btn"] = gr.Button("⟳", scale=0, min_width=44)
-        c["name"] = gr.Textbox(label="Character name", placeholder="e.g. Nova")
-        c["description"] = gr.Textbox(label="Description", lines=3,
-            placeholder="a voluptuous woman with brown hair and glasses")
-        c["style"] = gr.Radio(STYLES, value="realism", label="Style")
-        gr.Markdown("<sub>Supplying a reference image skips **Base Gen** — the "
-                    "reference becomes the base.</sub>")
-        c["reference_image"] = gr.Image(label="Reference image (optional)",
-                                        type="filepath", height=240)
-        with gr.Accordion("LoRAs (optional)", open=False):
-            c["selected_loras"] = gr.Dropdown(label="LoRAs", multiselect=True, choices=[])
-            c["lora_multipliers"] = gr.Textbox(label="Multipliers", placeholder="0.8, 1.0")
-            c["lora_trigger_words"] = gr.Textbox(label="Trigger words")
-        gr.Markdown("<sub>All fields autosave; they'll be restored next launch.</sub>")
+        with gr.Row():
+            with gr.Column(scale=1):
+                c["name"] = gr.Textbox(label="Character name", placeholder="e.g. Nova")
+                c["description"] = gr.Textbox(label="Description", lines=5,
+                    placeholder="a voluptuous woman with brown hair and glasses")
+                c["style"] = gr.Radio(STYLES, value="realism", label="Style")
+            with gr.Column(scale=1):
+                gr.Markdown("<sub>A reference image skips **Base Gen** — it becomes the "
+                            "base directly.</sub>")
+                c["reference_image"] = gr.Image(label="Reference image (optional)",
+                                                type="filepath", height=360)
+        gr.Markdown("<sub>All fields autosave; restored next launch. LoRAs are picked "
+                    "in the Generation settings bar.</sub>")
         c["clear_btn"] = gr.Button("🗑 Clear Wizard", variant="stop")
     return g, c
 
@@ -98,21 +98,20 @@ def build_swap(visible: bool):
         with gr.Row():
             with gr.Column(scale=1):
                 c["base_preview"] = gr.Image(label="Current base", type="filepath",
-                                             height=300, interactive=False)
+                                             height=560, interactive=False)
                 c["result"] = gr.Image(label="Result (becomes the base)",
-                                       type="filepath", height=300)
+                                       type="filepath", height=560)
             with gr.Column(scale=1):
-                gr.Markdown("**Face swap**")
-                c["face_source"] = gr.Image(label="Face source", type="filepath", height=200)
+                gr.Markdown("### Face swap")
+                c["face_source"] = gr.Image(label="Face source", type="filepath", height=320)
                 with gr.Row():
                     c["face_enhancer"] = gr.Radio(["", "gfpgan", "codeformer"], value="",
                                                   label="Enhancer")
                     c["face_enhancer_strength"] = gr.Slider(0.0, 1.0, value=0.5, label="Strength")
                 c["face_blend_ratio"] = gr.Slider(0.0, 1.0, value=0.5, label="Enhancer blend")
                 c["run_face"] = gr.Button("Apply face swap to base", variant="primary")
-            with gr.Column(scale=1):
-                gr.Markdown("**Body swap** (SDXL/Pony/Illustrious)")
-                c["body_source"] = gr.Image(label="Body source", type="filepath", height=200)
+                gr.Markdown("### Body swap  <sub>(SDXL/Pony/Illustrious)</sub>")
+                c["body_source"] = gr.Image(label="Body source", type="filepath", height=320)
                 with gr.Row():
                     c["body_ip_scale"] = gr.Slider(0.0, 1.0, value=0.8, label="Identity")
                     c["body_denoise"] = gr.Slider(0.0, 1.0, value=0.75, label="Denoise")

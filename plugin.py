@@ -106,7 +106,7 @@ class ReplicantCharLab(WAN2GPPlugin):
         self._api = api_session
         self._faceswap = None  # lazy FaceSwapPipeline
         model_choices = discovery.build_model_choices(self._native_model_types())
-        lora_choices = [(m["name"], m["path"]) for m in discovery.discover_sdxl_loras()]
+        lora_choices = discovery.lora_choices()  # categorized; filtered by model below
         from .core import wizard_state
         init = wizard_state.load()
         gr.HTML(f"<style>{CSS}</style>")
@@ -164,6 +164,12 @@ class ReplicantCharLab(WAN2GPPlugin):
         import random as _rng
         SET = [s["model"], s["sampler"], s["scheduler"], s["steps"], s["cfg_scale"],
                s["clip_skip"], s["seed"], s["width"], s["height"]]
+
+        # LoRAs are family-specific (Pony≠Illustrious≠SDXL) — filter to the model's family.
+        def _loras_for(model_value):
+            return gr.update(choices=discovery.lora_choices(
+                family=discovery.model_family(model_value)), value=[])
+        s["model"].change(_loras_for, inputs=[s["model"]], outputs=[s["loras"]])
 
         # -- base candidates --
         def _gen_base(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
