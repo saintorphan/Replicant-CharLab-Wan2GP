@@ -265,10 +265,16 @@ def head_excluded_body_mask(base_path, models_root, hair_up=2.0,
         logger.warning("head detection failed; inpainting the full person", exc_info=True)
     if exclude_hands:
         try:
-            from . import deps
-            deps.ensure({"mediapipe": "mediapipe"})  # hand landmarks
-            import cv2
             import mediapipe as mp
+            # mediapipe's legacy `solutions` API is incompatible with protobuf>=5
+            # (and is absent from some wheels). When unavailable, skip hand
+            # preservation rather than spam a traceback — body swap still runs.
+            if not hasattr(mp, "solutions"):
+                logger.info("mediapipe.solutions unavailable (protobuf %s); skipping "
+                            "hand preservation — hands may be regenerated.",
+                            __import__("google.protobuf", fromlist=["__version__"]).__version__)
+                return Image.fromarray(mask, "L")
+            import cv2
             bgr = cv2.imread(base_path)
             H, W = mask.shape
             with mp.solutions.pose.Pose(static_image_mode=True, model_complexity=2,
