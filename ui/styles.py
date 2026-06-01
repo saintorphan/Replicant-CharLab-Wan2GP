@@ -24,7 +24,7 @@ button.replicant-tabbtn {
 #replicant-header #replicant-banner { margin: 0; text-align: center; }
 /* Stretched to fill the column width at a fixed height (intentionally wider than
    the native 4.03:1 ratio — wider, not taller). */
-#replicant-header #replicant-banner img { width: 100%; max-width: 100%; height: 230px;
+#replicant-header #replicant-banner img { width: 100%; max-width: 100%; height: 175px;
     object-fit: fill; margin: 0 auto; display: block; }
 .replicant-taglines { display: flex; flex-direction: column; justify-content: center;
     align-items: center; gap: 44px; height: 100%; text-align: center; }
