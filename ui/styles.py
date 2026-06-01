@@ -20,7 +20,7 @@ button.replicant-tabbtn {
 #replicant-clearbtn { width: 100%; background: #d32f2f !important; color: #fff !important;
     border-color: #d32f2f !important; }
 #replicant-clearbtn:hover { background: #b71c1c !important; border-color: #b71c1c !important; }
-.replicant-ghlink { text-align: center; margin-top: 6px; font-size: 1.0em; }
+.replicant-ghlink { text-align: center; margin-top: 8px; font-size: 1.5em; }
 .replicant-ghlink a { color: #e83e8c; text-decoration: none; }
 .replicant-ghlink a:hover { text-decoration: underline; }
 #replicant-header #replicant-banner { margin: 0; text-align: center; }
