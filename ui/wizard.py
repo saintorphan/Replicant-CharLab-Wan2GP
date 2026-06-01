@@ -46,11 +46,11 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
     with gr.Row(elem_id="replicant-header"):
         with gr.Column(scale=3):
             gr.HTML('<div class="replicant-taglines">'
-                    '<div class="replicant-tagline">&ldquo;Generate, modify, and train '
+                    '<div class="replicant-tagline">Generate, modify, and train '
                     'image and video<br>character LoRAs from a single prompt or '
-                    'reference!&rdquo;</div>'
-                    '<div class="replicant-tagline">&ldquo;Wan 2.2, LTX 2.3, Z-Image, '
-                    'Flux, and...<br>wait, is that SDXL? Illustrious?? PONY?!&rdquo;</div>'
+                    'reference!</div>'
+                    '<div class="replicant-tagline">Wan 2.2, LTX 2.3, Z-Image, '
+                    'Flux, and...<br>wait, is that SDXL? Illustrious?? PONY?!</div>'
                     '</div>')
         with gr.Column(scale=10):
             gr.HTML(_banner_html())
