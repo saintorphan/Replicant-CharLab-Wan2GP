@@ -114,8 +114,11 @@ def build_base(visible: bool, init=None):
                     c["reimagine"] = gr.Button("Reimagine reference (img2img)")
         with gr.Row():
             with gr.Column(scale=2):
+                # Tall enough for two full rows of portrait candidates (3 cols);
+                # scrolls when there are more.
                 c["candidates"] = gr.Gallery(label="Candidates — click to select",
-                                             columns=3, height=420, show_fullscreen_button=True,
+                                             columns=3, rows=2, height=720,
+                                             object_fit="contain", show_fullscreen_button=True,
                                              value=_init_gallery(init, "base.candidates"))
             with gr.Column(scale=1):
                 c["selected_base"] = gr.Image(label="Selected base", type="filepath",

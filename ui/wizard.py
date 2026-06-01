@@ -71,7 +71,9 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
     step = gr.State(0)
     poses_state = gr.State({"poses": [], "specs": []})  # filled by pose gen (step 5)
 
-    nav_outputs = groups + rail + [back_btn, next_btn, step]
+    sw, sh = settings["width"], settings["height"]
+    nav_outputs = groups + rail + [back_btn, next_btn, step, sw, sh]
+    _BASE_STEP = 2  # ③ Base Gen — forced portrait + locked dims
 
     def _set_step(target: int):
         target = max(0, min(_N - 1, int(target)))
@@ -80,6 +82,11 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
         updates += [gr.update(interactive=(target > 0)),
                     gr.update(interactive=(target < _N - 1)),
                     target]
+        if target == _BASE_STEP:  # base must be a full-body portrait
+            updates += [gr.update(value=832, interactive=False),
+                        gr.update(value=1216, interactive=False)]
+        else:
+            updates += [gr.update(interactive=True), gr.update(interactive=True)]
         return updates
 
     reference = comps["info"]["reference_image"]
