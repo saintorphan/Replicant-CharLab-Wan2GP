@@ -1,6 +1,6 @@
 # Replicant Character Lab — Wan2GP Plugin
 
-A [Wan2GP](https://github.com/deepbeepmeep/Wan2GP) plugin that ports the **character-creator wizard** from SupremeDiffusion into Wan2GP's Gradio UI.
+A [Wan2GP](https://github.com/deepbeepmeep/Wan2GP) plugin that ports the **character-creator wizard** from [SupremeDiffusion](https://github.com/saintorphan/SupremeDiffusion) into Wan2GP's Gradio UI.
 
 ![Replicant Character Lab](replicant.png)
 
