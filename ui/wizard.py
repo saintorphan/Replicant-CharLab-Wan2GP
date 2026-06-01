@@ -109,6 +109,14 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
     base_sel.change(lambda p: p or gr.update(), inputs=[base_sel],
                     outputs=[comps["swap"]["base_preview"]])
 
+    # Carry prompts onto Base Gen and keep them in sync both ways (settles because
+    # Gradio doesn't re-fire .change when the value is unchanged).
+    prm, bp, bn = comps["prompt"], comps["base"]["pos"], comps["base"]["neg"]
+    prm["positive_prompt"].change(lambda v: v, inputs=[prm["positive_prompt"]], outputs=[bp])
+    prm["negative_prompt"].change(lambda v: v, inputs=[prm["negative_prompt"]], outputs=[bn])
+    bp.change(lambda v: v, inputs=[bp], outputs=[prm["positive_prompt"]])
+    bn.change(lambda v: v, inputs=[bn], outputs=[prm["negative_prompt"]])
+
     _wire_load_save(comps, settings, poses_state)
     _wire_persistence(comps, settings, poses_state, init or {})
 

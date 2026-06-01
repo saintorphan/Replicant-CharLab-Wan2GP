@@ -199,8 +199,7 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         base["generate"].click(
             _gen_base,
-            inputs=[self.state] + SET + [prm["positive_prompt"], prm["negative_prompt"],
-                                         base["count"]],
+            inputs=[self.state] + SET + [base["pos"], base["neg"], base["count"]],
             outputs=[base["candidates"], base["selected_base"]])
 
         def _pick(evt: gr.SelectData):
@@ -241,7 +240,7 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         base["reimagine"].click(
             _reimagine,
-            inputs=[self.state] + SET + [prm["positive_prompt"], prm["negative_prompt"],
+            inputs=[self.state] + SET + [base["pos"], base["neg"],
                                          base["denoise"], base["count"], base["ref_avatar"]],
             outputs=[base["candidates"], base["selected_base"]])
 

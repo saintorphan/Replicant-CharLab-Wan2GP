@@ -92,6 +92,10 @@ def build_base(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ③ Base Generation")
         c = {}
+        c["pos"] = gr.Textbox(label="Positive prompt (carried from step 2, editable)",
+                              lines=2, value=(init or {}).get("prompt.positive_prompt", ""))
+        c["neg"] = gr.Textbox(label="Negative prompt (carried from step 2, editable)",
+                              lines=2, value=(init or {}).get("prompt.negative_prompt", ""))
         with gr.Row():
             with gr.Column(scale=0, min_width=170):
                 c["ref_avatar"] = gr.Image(label="Reference", type="filepath", height=160,
