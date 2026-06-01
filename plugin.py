@@ -227,8 +227,19 @@ class ReplicantCharLab(WAN2GPPlugin):
         # the swap result becomes the canonical base
         swap["result"].change(lambda p: p or gr.update(), inputs=[swap["result"]],
                               outputs=[base["selected_base"]])
+
+        # A/B compare: base vs swapped, side by side, each full-screen + zoomable.
+        def _ab(base_img, result_img):
+            return (gr.update(visible=True), gr.update(visible=True),
+                    base_img or None, result_img or None)
+        swap["ab_btn"].click(_ab, inputs=[base["selected_base"], swap["result"]],
+                             outputs=[swap["ab_row"], swap["ab_close_row"],
+                                      swap["ab_base"], swap["ab_result"]])
+        swap["ab_close"].click(
+            lambda: (gr.update(visible=False), gr.update(visible=False)),
+            outputs=[swap["ab_row"], swap["ab_close_row"]])
         def _body(state, model, sel_base, body_src, ip_scale, denoise, body_cfg,
-                  cn_strength, steps, seed, sampler, scheduler, pos, neg,
+                  cn_strength, steps, seed, sampler, scheduler, pos, neg, adet,
                   progress=gr.Progress()):
             if not sel_base:
                 raise gr.Error("Generate/select a base image first (step 3).")
@@ -247,7 +258,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                     ident, sel_base, body_src, pos, neg,
                     cn_strength=float(cn_strength), ip_scale=float(ip_scale),
                     denoise=float(denoise), cfg=float(body_cfg), steps=int(steps),
-                    seed=int(seed), sampler=sampler, scheduler=scheduler)
+                    seed=int(seed), sampler=sampler, scheduler=scheduler,
+                    adetailer=bool(adet))
                 return out or gr.update()
             finally:
                 self.release_gpu(state)
@@ -257,7 +269,8 @@ class ReplicantCharLab(WAN2GPPlugin):
             inputs=[self.state, s["model"], base["selected_base"], swap["body_source"],
                     swap["body_ip_scale"], swap["body_denoise"], swap["body_cfg"],
                     swap["body_cn_strength"], s["steps"], s["seed"], s["sampler"],
-                    s["scheduler"], prm["positive_prompt"], prm["negative_prompt"]],
+                    s["scheduler"], prm["positive_prompt"], prm["negative_prompt"],
+                    swap["adetailer"]],
             outputs=[swap["result"]])
 
         # -- step 5: pose variants (+ mandatory base-face swap) --

@@ -106,7 +106,8 @@ class _ProjMgr:
 
 def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
               cn_strength=0.7, ip_scale=0.8, denoise=0.75, cfg=7.0, steps=30,
-              seed=-1, sampler="DPM++ 3M SDE", scheduler="Karras") -> str | None:
+              seed=-1, sampler="DPM++ 3M SDE", scheduler="Karras",
+              adetailer=True) -> str | None:
     """Body double: segment the person in the base, extract an openpose control
     image, then inpaint a new body with the source person's identity (ControlNet
     openpose + IP-Adapter faceid_plus). SD-family checkpoints only.
@@ -138,6 +139,9 @@ def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
     cfg_obj.bodydouble_prompt = prompt or ""
     cfg_obj.bodydouble_negative_prompt = negative or ""
     cfg_obj.bodydouble_seed = int(seed)
+    # ADetailer face restore on the result (best-effort; honored if the pipeline reads it).
+    cfg_obj.bodydouble_adetailer = bool(adetailer)
+    cfg_obj.adetailer = bool(adetailer)
 
     with models.no_auto_download():  # never silently pull BiRefNet/ControlNet/IP-Adapter
         mask = segment_foreground(base_path, models_root)

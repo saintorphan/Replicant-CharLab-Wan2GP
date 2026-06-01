@@ -82,10 +82,10 @@ def build_base(visible: bool):
         with gr.Row():
             with gr.Column(scale=2):
                 c["candidates"] = gr.Gallery(label="Candidates — click to select",
-                                             columns=3, height=420)
+                                             columns=3, height=420, show_fullscreen_button=True)
             with gr.Column(scale=1):
                 c["selected_base"] = gr.Image(label="Selected base", type="filepath",
-                                              height=420)
+                                              height=420, show_fullscreen_button=True)
     return g, c
 
 
@@ -96,14 +96,18 @@ def build_swap(visible: bool):
                     "generation always grabs the face from the finalized base.</sub>")
         c = {}
         with gr.Row():
+            c["ab_btn"] = gr.Button("🔍 A/B compare (full screen + zoom)")
+        with gr.Row():
             with gr.Column(scale=1):
                 c["base_preview"] = gr.Image(label="Current base", type="filepath",
-                                             height=560, interactive=False)
-                c["result"] = gr.Image(label="Result (becomes the base)",
-                                       type="filepath", height=560)
+                                             height=560, interactive=False,
+                                             show_fullscreen_button=True)
+                c["result"] = gr.Image(label="Result (becomes the base)", type="filepath",
+                                       height=560, show_fullscreen_button=True)
             with gr.Column(scale=1):
                 gr.Markdown("### Face swap")
-                c["face_source"] = gr.Image(label="Face source", type="filepath", height=320)
+                c["face_source"] = gr.Image(label="Face source", type="filepath", height=320,
+                                            show_fullscreen_button=True)
                 with gr.Row():
                     c["face_enhancer"] = gr.Radio(["", "gfpgan", "codeformer"], value="",
                                                   label="Enhancer")
@@ -111,14 +115,30 @@ def build_swap(visible: bool):
                 c["face_blend_ratio"] = gr.Slider(0.0, 1.0, value=0.5, label="Enhancer blend")
                 c["run_face"] = gr.Button("Apply face swap to base", variant="primary")
                 gr.Markdown("### Body swap  <sub>(SDXL/Pony/Illustrious)</sub>")
-                c["body_source"] = gr.Image(label="Body source", type="filepath", height=320)
+                c["body_source"] = gr.Image(label="Body source", type="filepath", height=320,
+                                            show_fullscreen_button=True)
                 with gr.Row():
                     c["body_ip_scale"] = gr.Slider(0.0, 1.0, value=0.8, label="Identity")
                     c["body_denoise"] = gr.Slider(0.0, 1.0, value=0.75, label="Denoise")
                 with gr.Row():
                     c["body_cfg"] = gr.Slider(1.0, 15.0, value=7.0, step=0.5, label="CFG")
                     c["body_cn_strength"] = gr.Slider(0.0, 1.0, value=0.7, label="ControlNet")
+                c["adetailer"] = gr.Checkbox(value=True, label="ADetailer (face restore on body-swap result)")
                 c["run_body"] = gr.Button("Apply body swap to base", variant="primary")
+        # A/B comparison overlay — base vs swapped, side by side, each zoomable full screen.
+        with gr.Row(visible=False) as ab_row:
+            with gr.Column():
+                gr.Markdown("### A — Base")
+                c["ab_base"] = gr.Image(type="filepath", height=640, interactive=False,
+                                        show_label=False, show_fullscreen_button=True)
+            with gr.Column():
+                gr.Markdown("### B — Swapped")
+                c["ab_result"] = gr.Image(type="filepath", height=640, interactive=False,
+                                          show_label=False, show_fullscreen_button=True)
+        with gr.Row(visible=False) as ab_close_row:
+            c["ab_close"] = gr.Button("Close compare")
+        c["ab_row"] = ab_row
+        c["ab_close_row"] = ab_close_row
     return g, c
 
 
@@ -134,7 +154,7 @@ def build_poses(visible: bool):
                 label="Reference look strength (base → poses)")
             c["apply_body_to_poses"] = gr.Checkbox(value=True, label="Apply body swap to poses")
         c["generate"] = gr.Button("Generate poses", variant="primary")
-        c["pose_gallery"] = gr.Gallery(label="Poses (approve to keep)", columns=4, height=340)
+        c["pose_gallery"] = gr.Gallery(label="Poses (approve to keep)", columns=4, height=340, show_fullscreen_button=True)
     return g, c
 
 
