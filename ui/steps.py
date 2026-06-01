@@ -17,9 +17,9 @@ from ..core import paths, poses
 STEPS = [
     ("setup", "① Setup"),
     ("base", "② Baseline"),
-    ("swap", "③ Face / Body"),
+    ("swap", "③ Human Clone"),
     ("inpaint", "④ Touch Up"),
-    ("poses", "⑤ Poses"),
+    ("poses", "⑤ Replicate"),
     ("train", "⑥ Train"),
 ]
 
@@ -116,7 +116,7 @@ def build_base(visible: bool, init=None):
 
 def build_swap(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
-        gr.Markdown("### ③ Face / Body Swap")
+        gr.Markdown("### ③ Human Clone")
         gr.Markdown("*This step is completely optional.*")
         c = {}
         with gr.Row():
@@ -270,7 +270,7 @@ def build_inpaint(visible: bool, init=None):
 
 def build_poses(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
-        gr.Markdown("### ⑤ Pose Variants")
+        gr.Markdown("### ⑤ Replicate")
         gr.Markdown(f"<sub>{len(poses.POSES)} predefined poses (full / medium / close, "
                     "varied angles). The base face is applied to each for identity "
                     "consistency, then you approve the keepers.</sub>")
