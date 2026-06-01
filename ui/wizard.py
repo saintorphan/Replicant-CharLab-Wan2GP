@@ -70,6 +70,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
 
     step = gr.State(0)
     poses_state = gr.State({"poses": [], "specs": []})  # filled by pose gen (step 5)
+    has_ref = gr.State(False)  # whether a reference image is set (drives the skip)
 
     nav_outputs = groups + rail + [back_btn, next_btn, step]
 
@@ -87,27 +88,31 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
     BASE_IDX = 2
     reference = comps["info"]["reference_image"]
 
-    def _nav(s, ref, delta):
+    def _nav(s, ref_on, delta):
         target = int(s) + delta
-        if target == BASE_IDX and ref:
+        if target == BASE_IDX and ref_on:
             target = BASE_IDX + delta  # 3 going forward, 1 going back
         return _set_step(target)
 
     for i, btn in enumerate(rail):
         btn.click(lambda i=i: _set_step(i), outputs=nav_outputs)
-    back_btn.click(lambda s, ref: _nav(s, ref, -1), inputs=[step, reference], outputs=nav_outputs)
-    next_btn.click(lambda s, ref: _nav(s, ref, +1), inputs=[step, reference], outputs=nav_outputs)
+    # Nav reads the has_ref boolean State (NOT the reference Image) to avoid Gradio
+    # ImageData validation on every Back/Next click.
+    back_btn.click(lambda s, r: _nav(s, r, -1), inputs=[step, has_ref], outputs=nav_outputs)
+    next_btn.click(lambda s, r: _nav(s, r, +1), inputs=[step, has_ref], outputs=nav_outputs)
 
-    # A reference image becomes the base (so Face/Body has something to work on)
-    # AND greys Base Gen on the rail.
+    # A reference image becomes the base (so Face/Body has something to work on),
+    # greys Base Gen on the rail, and flips has_ref.
     base_sel = comps["base"]["selected_base"]
 
     def _ref_changed(ref):
-        if ref:
-            return gr.update(value="③ Base (skipped)", interactive=False), ref
-        return gr.update(value=STEPS[BASE_IDX][1], interactive=True), gr.update()
+        on = bool(ref)
+        rail_upd = (gr.update(value="③ Base (skipped)", interactive=False) if on
+                    else gr.update(value=STEPS[BASE_IDX][1], interactive=True))
+        return rail_upd, (ref if on else gr.update()), on
 
-    reference.change(_ref_changed, inputs=[reference], outputs=[rail[BASE_IDX], base_sel])
+    reference.change(_ref_changed, inputs=[reference],
+                     outputs=[rail[BASE_IDX], base_sel, has_ref])
 
     # Keep the Face/Body preview mirroring the current base (ref / gen / swap result).
     base_sel.change(lambda p: p or gr.update(), inputs=[base_sel],
@@ -122,19 +127,21 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
 
 
 # Fields autosaved/restored. Keyed "<group>.<name>"; "settings.*" come from the bar.
+# Image components are intentionally NOT persisted: their values are temp file
+# paths (gone after restart) and restoring a bare string into a gr.Image that is
+# also an event input breaks Gradio's ImageData validation.
 _PERSIST_SPEC = {
-    "info": ["name", "description", "style", "reference_image"],
+    "info": ["name", "description", "style"],
     "prompt": ["positive_prompt", "negative_prompt"],
-    "base": ["count", "selected_base"],
+    "base": ["count"],
     "settings": ["model", "sampler", "scheduler", "steps", "cfg_scale", "clip_skip",
                  "seed", "width", "height", "adetailer", "loras", "lora_multipliers"],
-    "swap": ["face_source", "face_enhancer", "face_enhancer_strength", "face_blend_ratio",
-             "body_source", "body_ip_scale", "body_denoise", "body_cfg", "body_cn_strength"],
+    "swap": ["face_enhancer", "face_enhancer_strength", "face_blend_ratio",
+             "body_ip_scale", "body_denoise", "body_cfg", "body_cn_strength"],
     "poses": ["ref_look_strength", "apply_body_to_poses"],
     "train": ["dataset", "low_vram", "epochs"],
 }
-_IMAGE_KEYS = {"info.reference_image", "base.selected_base", "swap.face_source",
-               "swap.body_source"}
+_IMAGE_KEYS = set()  # no image fields persisted
 
 
 def _wire_persistence(comps, settings, poses_state, init):
