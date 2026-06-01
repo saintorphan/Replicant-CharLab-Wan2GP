@@ -51,7 +51,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
                     '<div class="replicant-tagline">&ldquo;Actually, yes&mdash; we DO '
                     'support<br>SDXL!&rdquo;</div>'
                     '</div>')
-        with gr.Column(scale=6):
+        with gr.Column(scale=10):
             gr.HTML(_banner_html())
         with gr.Column(scale=3, min_width=200, elem_id="replicant-clearcol"):
             header_clear_btn = gr.Button("🗑 Clear Wizard", variant="stop",
