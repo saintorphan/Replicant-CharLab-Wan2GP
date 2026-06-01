@@ -88,12 +88,23 @@ def build_prompt(visible: bool, init=None):
 def build_base(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ③ Base Generation")
-        gr.Markdown("<sub>Generate full-body, front-facing candidates; pick one as "
-                    "the canonical base for swaps and poses.</sub>")
         c = {}
         with gr.Row():
-            c["count"] = gr.Slider(1, 8, value=4, step=1, label="Candidates")
-            c["generate"] = gr.Button("Generate candidates", variant="primary", scale=2)
+            with gr.Column(scale=0, min_width=170):
+                c["ref_avatar"] = gr.Image(label="Reference", type="filepath", height=160,
+                                           interactive=False, show_fullscreen_button=True,
+                                           value=_init_img(init, "info.reference_image"))
+            with gr.Column():
+                gr.Markdown("<sub>**Generate** fresh candidates (txt2img), **Reimagine** the "
+                            "reference (img2img — SD models), or just **skip** — the "
+                            "reference passes through as the base.</sub>")
+                with gr.Row():
+                    c["count"] = gr.Slider(1, 8, value=4, step=1, label="Candidates")
+                    c["denoise"] = gr.Slider(0.2, 1.0, value=0.6, step=0.05,
+                                             label="Reimagine denoise")
+                with gr.Row():
+                    c["generate"] = gr.Button("Generate candidates (txt2img)", variant="primary")
+                    c["reimagine"] = gr.Button("Reimagine reference (img2img)")
         with gr.Row():
             with gr.Column(scale=2):
                 c["candidates"] = gr.Gallery(label="Candidates — click to select",

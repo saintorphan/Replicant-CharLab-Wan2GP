@@ -115,6 +115,33 @@ def generate_txt2img(checkpoint_path, prompt, negative, width, height, steps, cf
     return saved
 
 
+def generate_img2img(checkpoint_path, image_path, prompt, negative, width, height,
+                     steps, cfg, seed, denoise=0.6, sampler="DPM++ 2M", scheduler="Karras",
+                     batch_size=1, clip_skip=1, out_dir=None) -> list[str]:
+    """Reimagine an init image with an SD-family checkpoint (img2img)."""
+    import random as _random
+    pipe = get_pipeline()
+    if seed is None or int(seed) < 0:
+        seed = _random.randint(0, 2**31 - 1)
+    with models.no_auto_download():
+        pipe.load(checkpoint_path)
+        images = pipe.generate_img2img(
+            image=image_path, prompt=prompt, negative_prompt=negative or "",
+            denoising_strength=float(denoise), width=int(width), height=int(height),
+            steps=int(steps), cfg_scale=float(cfg), seed=int(seed), sampler=sampler,
+            scheduler=scheduler, batch_size=int(batch_size), clip_skip=int(clip_skip))
+    out = Path(out_dir) if out_dir else (paths.cache_dir() / "sd_gen")
+    out.mkdir(parents=True, exist_ok=True)
+    saved = []
+    for i, img in enumerate(images or []):
+        f = out / f"i2i_{int(seed)}_{i}.png"
+        try:
+            img.save(f); saved.append(str(f))
+        except Exception:
+            logger.warning("failed saving img2img %d", i, exc_info=True)
+    return saved
+
+
 class _ProjMgr:
     """Minimal project manager for ImagePipeline — only get_project_path is used."""
     def __init__(self, root):

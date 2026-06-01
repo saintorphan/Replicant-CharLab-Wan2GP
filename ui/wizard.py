@@ -70,7 +70,6 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
 
     step = gr.State(0)
     poses_state = gr.State({"poses": [], "specs": []})  # filled by pose gen (step 5)
-    has_ref = gr.State(False)  # whether a reference image is set (drives the skip)
 
     nav_outputs = groups + rail + [back_btn, next_btn, step]
 
@@ -83,36 +82,28 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
                     target]
         return updates
 
-    # Conditional skip: when a reference image is supplied on step 1, Base Gen
-    # (index 2) is skipped — the reference becomes the base.
-    BASE_IDX = 2
     reference = comps["info"]["reference_image"]
 
-    def _nav(s, ref_on, delta):
-        target = int(s) + delta
-        if target == BASE_IDX and ref_on:
-            target = BASE_IDX + delta  # 3 going forward, 1 going back
-        return _set_step(target)
+    # Base Gen is no longer skipped for a reference — step 3 shows the reference and
+    # offers Reimagine (img2img) or skip-as-base.
+    def _nav(s, delta):
+        return _set_step(int(s) + delta)
 
     for i, btn in enumerate(rail):
         btn.click(lambda i=i: _set_step(i), outputs=nav_outputs)
-    # Nav reads the has_ref boolean State (NOT the reference Image) to avoid Gradio
-    # ImageData validation on every Back/Next click.
-    back_btn.click(lambda s, r: _nav(s, r, -1), inputs=[step, has_ref], outputs=nav_outputs)
-    next_btn.click(lambda s, r: _nav(s, r, +1), inputs=[step, has_ref], outputs=nav_outputs)
+    back_btn.click(lambda s: _nav(s, -1), inputs=[step], outputs=nav_outputs)
+    next_btn.click(lambda s: _nav(s, +1), inputs=[step], outputs=nav_outputs)
 
-    # A reference image becomes the base (so Face/Body has something to work on),
-    # greys Base Gen on the rail, and flips has_ref.
+    # A reference seeds the base (so skipping passes it through) + shows in step 3's
+    # avatar. Restored via the constructor elsewhere; here on user upload/change.
     base_sel = comps["base"]["selected_base"]
+    ref_avatar = comps["base"].get("ref_avatar")
 
     def _ref_changed(ref):
-        on = bool(ref)
-        rail_upd = (gr.update(value="③ Base (skipped)", interactive=False) if on
-                    else gr.update(value=STEPS[BASE_IDX][1], interactive=True))
-        return rail_upd, (ref if on else gr.update()), on
+        return (ref if ref else gr.update()), (ref or None)
 
     reference.change(_ref_changed, inputs=[reference],
-                     outputs=[rail[BASE_IDX], base_sel, has_ref])
+                     outputs=[base_sel, ref_avatar])
 
     # Keep the Face/Body preview mirroring the current base (ref / gen / swap result).
     base_sel.change(lambda p: p or gr.update(), inputs=[base_sel],
@@ -130,7 +121,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
 _PERSIST_SPEC = {
     "info": ["name", "description", "style"],
     "prompt": ["positive_prompt", "negative_prompt"],
-    "base": ["count"],
+    "base": ["count", "denoise"],
     "settings": ["model", "sampler", "scheduler", "steps", "cfg_scale", "clip_skip",
                  "seed", "width", "height", "adetailer", "loras", "lora_multipliers"],
     "swap": ["face_enhancer", "face_enhancer_strength", "face_blend_ratio",

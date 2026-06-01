@@ -210,6 +210,38 @@ class ReplicantCharLab(WAN2GPPlugin):
             return v if isinstance(v, str) else gr.update()
         base["candidates"].select(_pick, outputs=[base["selected_base"]])
 
+        # Reimagine the reference (img2img) — SD-family only.
+        def _reimagine(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
+                       width, height, pos, neg, denoise, ref_img, progress=gr.Progress()):
+            backend, ident = discovery.parse_model_value(model)
+            if backend != "sd":
+                raise gr.Error("Reimagine (img2img) needs an SDXL/Pony/Illustrious model.")
+            if not ref_img:
+                raise gr.Error("No reference image to reimagine (add one on step 1).")
+            if not (pos and pos.strip()):
+                raise gr.Error("Build or enhance a positive prompt on step 2 first.")
+            self._release_faceswap()
+            if not self.acquire_gpu(state):
+                return gr.update(), gr.update()
+            try:
+                sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
+                progress(0.1, desc="Reimagining reference (img2img)…")
+                files = gen_sd.generate_img2img(
+                    ident, ref_img, pos, neg, width, height, steps, cfg, sd,
+                    denoise=float(denoise), sampler=sampler, scheduler=scheduler,
+                    clip_skip=int(clip_skip))
+            finally:
+                self.release_gpu(state)
+            if not files:
+                raise gr.Error("img2img produced no images.")
+            return files, files[0]
+
+        base["reimagine"].click(
+            _reimagine,
+            inputs=[self.state] + SET + [prm["positive_prompt"], prm["negative_prompt"],
+                                         base["denoise"], base["ref_avatar"]],
+            outputs=[base["candidates"], base["selected_base"]])
+
         # -- step 4: face swap onto the base (optional) --
         def _face(state, target_base, face_src, enhancer, strength, blend):
             if not target_base:
