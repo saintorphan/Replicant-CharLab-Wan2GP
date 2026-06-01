@@ -1,8 +1,8 @@
 """CSS for the Replicant Character Lab tab (banner + step rail)."""
 
 CSS = """
-#replicant-banner { text-align: center; margin: 4px 0 10px 0; }
-#replicant-banner img { height: 70px; width: auto; display: inline-block; }
+#replicant-banner { text-align: center; margin: 4px 0 14px 0; }
+#replicant-banner img { width: 100%; max-width: 1580px; height: auto; display: inline-block; }
 
 #replicant-rail { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 #replicant-rail button {
