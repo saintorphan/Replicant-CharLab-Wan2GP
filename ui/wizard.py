@@ -221,6 +221,11 @@ _PERSIST_SPEC = {
              "face_adetailer", "face_adet_pos", "face_adet_neg",
              "body_ip_scale", "body_denoise", "body_cfg", "body_cn_strength",
              "adetailer", "body_adet_pos", "body_adet_neg"],
+    "inpaint": ["inpaint_prompt", "inpaint_neg", "inpaint_denoise", "inpaint_count",
+                "inpaint_mask_blur", "inpaint_fill", "inpaint_full_res", "inpaint_padding",
+                "inpaint_loras", "inpaint_lora_mult",
+                "cohesion_prompt", "cohesion_neg", "cohesion_cfg", "cohesion_steps",
+                "cohesion_focus"],
     "poses": ["ref_look_strength", "apply_body_to_poses"],
     "train": ["dataset", "low_vram", "epochs"],
 }

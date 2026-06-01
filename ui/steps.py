@@ -201,7 +201,7 @@ def build_inpaint(visible: bool, init=None, lora_choices=None):
                                      label="Mode", show_label=False)
         # --- Inpaint mode: paint a mask on the base, prompt-driven inpaint ----
         with gr.Group(visible=True) as inpaint_grp:
-            with gr.Row(equal_height=True):
+            with gr.Row():
                 with gr.Column(scale=1):
                     c["editor"] = gr.ImageEditor(label="Paint the area to fix", type="numpy",
                                                  height=720, layers=False, eraser=True,

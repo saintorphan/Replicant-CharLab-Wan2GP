@@ -51,9 +51,10 @@ button.replicant-tabbtn {
 .replicant-acc > .label-wrap span,
 .replicant-acc > button.label-wrap span { font-size: 2em !important; font-weight: 700 !important; }
 
-/* Touch Up: options column scrolls (Run + actions are in their own row below it);
-   results strip scrolls sideways. */
-#replicant-inpaint-opts { max-height: 720px; overflow-y: auto; }
+/* Touch Up: options column is a fixed-height scroll box (Run + actions are in their
+   own row below it); results strip scrolls sideways. */
+#replicant-inpaint-opts { height: 720px; max-height: 720px; overflow-y: auto;
+    flex: 0 0 auto; }
 #replicant-inpaint-out .grid-wrap { overflow-x: auto !important; }
 #replicant-inpaint-out .grid-container {
     display: flex !important; flex-wrap: nowrap !important; }
