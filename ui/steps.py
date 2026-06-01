@@ -227,18 +227,18 @@ def build_inpaint(visible: bool, init=None):
                         label="Full-res padding (px)")
                     gr.Markdown("<sub>Adjust additional settings in **Generation Settings** "
                                 "above. Size is locked to portrait.</sub>")
-                    c["run_inpaint"] = gr.Button("Run inpaint", variant="primary")
-                    with gr.Row():
-                        c["use_inpaint"] = gr.Button("✓ Use as Base", variant="primary")
-                        c["reuse_inpaint"] = gr.Button("↻ Send to Inpaint")
-                        c["send_to_cohesion"] = gr.Button("→ Send to Cohesion")
-                        c["revert_inpaint"] = gr.Button("↩ Revert")
-        c["inpaint_grp"] = inpaint_grp
-        # Output viewer: scrolls horizontally, tall enough for a full portrait.
-        with gr.Row():
+            # Actions row — between the canvas/settings and the results strip.
+            with gr.Row():
+                c["run_inpaint"] = gr.Button("Run inpaint", variant="primary")
+                c["use_inpaint"] = gr.Button("✓ Use as Base", variant="primary")
+                c["reuse_inpaint"] = gr.Button("↻ Send to Inpaint")
+                c["send_to_cohesion"] = gr.Button("→ Send to Cohesion")
+                c["revert_inpaint"] = gr.Button("↩ Revert")
+            # Output viewer: scrolls horizontally, tall enough for a full portrait.
             c["inpaint_gallery"] = gr.Gallery(label="Results", height=640, columns=20,
                 rows=1, object_fit="contain", show_fullscreen_button=True,
                 elem_id="replicant-inpaint-out")
+        c["inpaint_grp"] = inpaint_grp
         c["inpaint_picked"] = gr.State(None)
         c["inpaint_prev_base"] = gr.State(None)  # for Revert
         # --- Cohesion mode: gentle img2img normalize pass ---------------------
