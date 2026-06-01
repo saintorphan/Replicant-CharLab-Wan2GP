@@ -39,17 +39,23 @@ def build_prereqs():
             chars_tb = _dir_row("Characters root", str(paths.characters_dir()))
             data_tb = _dir_row("Dataset root", str(paths.datasets_dir()))
             models_tb = _dir_row("Models dir (download target)", str(paths.models_dir()))
+            sdxl_m_tb = _dir_row("SDXL Models (optional — SDXL/Pony/Illustrious txt2img)",
+                                 paths.sdxl_models_dir())
+            sdxl_l_tb = _dir_row("SDXL LoRAs (optional — SDXL-family LoRA path)",
+                                 paths.sdxl_loras_dir())
             with gr.Row():
                 save_btn = gr.Button("Save directories", variant="primary")
                 dir_status = gr.Markdown()
 
-            def _save(c, d, m):
-                paths.set_dirs(characters=c, datasets=d, models=m)
+            def _save(c, d, m, sm, sl):
+                paths.set_dirs(characters=c, datasets=d, models=m,
+                               sdxl_models=sm, sdxl_loras=sl)
                 return (str(paths.characters_dir()), str(paths.datasets_dir()),
-                        str(paths.models_dir()), "✅ Saved.")
+                        str(paths.models_dir()), paths.sdxl_models_dir(),
+                        paths.sdxl_loras_dir(), "✅ Saved.")
 
-            save_btn.click(_save, inputs=[chars_tb, data_tb, models_tb],
-                           outputs=[chars_tb, data_tb, models_tb, dir_status])
+            save_btn.click(_save, inputs=[chars_tb, data_tb, models_tb, sdxl_m_tb, sdxl_l_tb],
+                           outputs=[chars_tb, data_tb, models_tb, sdxl_m_tb, sdxl_l_tb, dir_status])
 
         with gr.Accordion("Models (not bundled with Wan2GP)", open=False, elem_classes="replicant-acc"):
             gr.Markdown("Models this extension needs. Downloads stash into the "

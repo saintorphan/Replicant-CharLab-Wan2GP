@@ -49,15 +49,29 @@ def save_config() -> None:
         logger.warning("Could not write %s", _config_path(), exc_info=True)
 
 
-def set_dirs(*, characters=None, datasets=None, models=None) -> None:
-    """Override any of the three roots (absolute paths) and persist."""
+def set_dirs(*, characters=None, datasets=None, models=None,
+             sdxl_models=None, sdxl_loras=None) -> None:
+    """Override any of the roots (absolute paths) and persist. SDXL model/LoRA
+    dirs are optional external paths (e.g. an a1111/forge install) — stored only,
+    never created."""
     cfg = load_config()
     for key, val in (("characters_dir", characters), ("datasets_dir", datasets),
-                     ("models_dir", models)):
-        if val:
-            cfg[key] = str(Path(val).expanduser())
+                     ("models_dir", models), ("sdxl_models_dir", sdxl_models),
+                     ("sdxl_loras_dir", sdxl_loras)):
+        if val is not None:
+            cfg[key] = str(Path(val).expanduser()) if val else ""
     save_config()
     ensure_dirs()
+
+
+def sdxl_models_dir() -> str:
+    """Optional external dir of SDXL/Pony/Illustrious checkpoints ('' if unset)."""
+    return load_config().get("sdxl_models_dir", "")
+
+
+def sdxl_loras_dir() -> str:
+    """Optional external dir of SDXL-family LoRAs ('' if unset)."""
+    return load_config().get("sdxl_loras_dir", "")
 
 
 # --- roots -----------------------------------------------------------------
