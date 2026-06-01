@@ -17,9 +17,11 @@ button.replicant-tabbtn {
 #replicant-header { align-items: center; margin: 0 0 14px 0; }
 /* Clear Wizard column: centered, narrower button, nudged up; GitHub link below. */
 #replicant-clearcol { align-items: center; transform: translateY(-8px); }
-#replicant-clearcol button { margin: 0 auto; }
-.replicant-ghlink { text-align: center; margin-top: 6px; font-size: 1.8em; }
-.replicant-ghlink a { color: #a64dff; text-decoration: none; }
+#replicant-clearbtn { width: 100%; background: #d32f2f !important; color: #fff !important;
+    border-color: #d32f2f !important; }
+#replicant-clearbtn:hover { background: #b71c1c !important; border-color: #b71c1c !important; }
+.replicant-ghlink { text-align: center; margin-top: 6px; font-size: 1.0em; }
+.replicant-ghlink a { color: #e83e8c; text-decoration: none; }
 .replicant-ghlink a:hover { text-decoration: underline; }
 #replicant-header #replicant-banner { margin: 0; text-align: center; }
 /* Stretched to fill the column width at a fixed height (intentionally wider than
@@ -28,8 +30,8 @@ button.replicant-tabbtn {
     object-fit: fill; margin: 0 auto; display: block; }
 .replicant-taglines { display: flex; flex-direction: column; justify-content: center;
     align-items: center; gap: 44px; height: 100%; text-align: center; }
-.replicant-tagline { font-size: 1.5em; font-weight: 700; font-style: italic;
-    line-height: 1.25; color: #ff5fa2; }
+.replicant-tagline { font-size: 1.3em; font-weight: 700; font-style: italic;
+    line-height: 1.25; color: #e83e8c; }
 
 #replicant-rail { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 #replicant-rail button {
