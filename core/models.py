@@ -95,8 +95,12 @@ def download(key: str, progress=None) -> str:
     tmp = dst.with_suffix(dst.suffix + ".part")
     try:
         def _hook(blocks, bsize, total):
-            if progress and total > 0:
-                progress(min(1.0, blocks * bsize / total), desc=f"Downloading {spec.name}")
+            # Best-effort: a progress-reporting hiccup must never fail the download.
+            if progress is not None and total > 0:
+                try:
+                    progress(min(1.0, blocks * bsize / total), desc=f"Downloading {spec.name}")
+                except Exception:
+                    pass
         urllib.request.urlretrieve(spec.url, tmp, _hook)
         tmp.replace(dst)
         return f"[Success] {spec.name} → {dst}"
