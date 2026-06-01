@@ -32,8 +32,8 @@ def _dir_row(label: str, value: str):
 
 def build_prereqs():
     """Build the Prerequisites accordion. Returns a dict of key components."""
-    with gr.Accordion("Prerequisites", open=False):
-        with gr.Accordion("Directories", open=False):
+    with gr.Accordion("Prerequisites", open=False, elem_classes="replicant-acc"):
+        with gr.Accordion("Directories", open=False, elem_classes="replicant-acc"):
             gr.Markdown("Where saved characters, datasets and this extension's "
                         "downloaded models live. Click 📁 to browse.")
             chars_tb = _dir_row("Characters root", str(paths.characters_dir()))
@@ -51,7 +51,7 @@ def build_prereqs():
             save_btn.click(_save, inputs=[chars_tb, data_tb, models_tb],
                            outputs=[chars_tb, data_tb, models_tb, dir_status])
 
-        with gr.Accordion("Models (not bundled with Wan2GP)", open=False):
+        with gr.Accordion("Models (not bundled with Wan2GP)", open=False, elem_classes="replicant-acc"):
             gr.Markdown("Models this extension needs. Downloads stash into the "
                         "Models dir above.")
             rows = {}

@@ -12,6 +12,10 @@ CSS = """
 
 #replicant-nav { margin-top: 14px; display: flex; justify-content: space-between; }
 
+/* Prerequisites + its Directories/Models sub-accordion headers: 2x, bold */
+.replicant-acc > .label-wrap span,
+.replicant-acc > button.label-wrap span { font-size: 2em !important; font-weight: 700 !important; }
+
 .replicant-step { border: 1px solid var(--border-color-primary);
     border-radius: 10px; padding: 16px; background: var(--background-fill-secondary); }
 .replicant-step h3 { margin-top: 0; }
