@@ -3,12 +3,14 @@ visibility-toggled step panels (Gradio 5.29 has no native stepper component)."""
 from __future__ import annotations
 
 import base64
+import traceback
 from pathlib import Path
 
 import gradio as gr
 
-from ..core import character, paths
+from ..core import character, datasets, paths
 from .prereqs import build_prereqs
+from .settings_bar import build_settings_bar
 from .steps import BUILDERS, STEPS
 
 _ASSETS = Path(__file__).resolve().parent.parent / "assets"
@@ -31,16 +33,21 @@ def _banner_html() -> str:
     return '<div id="replicant-banner"><h2>Replicant · Character Lab</h2></div>'
 
 
-def build_wizard():
+def build_wizard(model_choices=None, lora_choices=None):
     """Build the wizard UI inside the current tab context.
 
-    Returns a dict with ``step`` (gr.State), ``groups`` (list), ``rail`` (list of
-    buttons), ``nav`` (back/next buttons), and ``components`` (per-step widget
-    dicts keyed by step id) so the plugin can wire generation/save logic."""
+    model_choices/lora_choices populate the shared settings bar (the plugin
+    supplies them since it has the wgp globals for native models).
+
+    Returns a dict with ``step``, ``groups``, ``rail``, ``nav``, ``components``,
+    ``settings`` (shared gen-settings bar) and ``prereqs``."""
     gr.HTML(_banner_html())
 
     # Prerequisites (directories + models) ----------------------------------
     prereqs = build_prereqs()
+
+    # Shared generation settings (Replicant-owned, used across pages) --------
+    settings = build_settings_bar(model_choices, lora_choices)
 
     # Step rail -------------------------------------------------------------
     rail = []
@@ -61,6 +68,7 @@ def build_wizard():
         next_btn = gr.Button("Next ▶", variant="primary")
 
     step = gr.State(0)
+    poses_state = gr.State({"poses": [], "specs": []})  # filled by pose gen (step 5)
 
     nav_outputs = groups + rail + [back_btn, next_btn, step]
 
@@ -97,10 +105,11 @@ def build_wizard():
 
     reference.change(_ref_changed, inputs=[reference], outputs=[rail[BASE_IDX]])
 
-    _wire_load_save(comps)
+    _wire_load_save(comps, settings, poses_state)
 
-    return {"step": step, "groups": groups, "rail": rail,
-            "nav": (back_btn, next_btn), "components": comps, "prereqs": prereqs}
+    return {"step": step, "groups": groups, "rail": rail, "nav": (back_btn, next_btn),
+            "components": comps, "settings": settings, "prereqs": prereqs,
+            "poses_state": poses_state}
 
 
 def _summary(cs, cdir) -> str:
@@ -114,7 +123,7 @@ def _summary(cs, cdir) -> str:
     return "\n".join(lines)
 
 
-def _wire_load_save(comps):
+def _wire_load_save(comps, settings, poses_state):
     info, prm, base, swap = (comps["info"], comps["prompt"],
                              comps["base"], comps["swap"])
     save = comps["save"]
@@ -125,8 +134,8 @@ def _wire_load_save(comps):
     load_outputs = [info["name"], info["description"], info["style"],
                     prm["positive_prompt"], prm["negative_prompt"],
                     info["reference_image"], base["selected_base"],
-                    base["steps"], base["cfg_scale"], base["seed"],
-                    base["width"], base["height"], base["adetailer"]]
+                    settings["steps"], settings["cfg_scale"], settings["seed"],
+                    settings["width"], settings["height"], settings["adetailer"]]
 
     def _load(sel):
         if not sel:
@@ -151,24 +160,39 @@ def _wire_load_save(comps):
                    prm["positive_prompt"], prm["negative_prompt"],
                    info["reference_image"], base["selected_base"],
                    swap["face_source"], swap["body_source"],
-                   base["steps"], base["cfg_scale"], base["seed"],
-                   base["width"], base["height"], base["adetailer"]]
+                   settings["steps"], settings["cfg_scale"], settings["seed"],
+                   settings["width"], settings["height"], settings["adetailer"],
+                   poses_state]
 
     def _save(name, desc, style, pos, neg, ref, sbase, face_src, body_src,
-              steps, cfg, seed, width, height, adet):
+              steps, cfg, seed, width, height, adet, poses_data,
+              progress=gr.Progress()):
         if not (name and name.strip()):
             return "⚠️ Enter a character name first.", gr.update()
+        pd = poses_data or {}
         cs = character.CharacterState(
             name=name, description=desc or "", style=style,
             positive_prompt=pos or "", negative_prompt=neg or "",
             reference_image=ref or "", selected_base=(sbase or ref or ""),
             face_source_path=face_src or "", body_source_path=body_src or "",
             face_swap_enabled=bool(face_src), body_swap_enabled=bool(body_src),
+            approved_poses=list(pd.get("poses", [])),
+            approved_pose_specs=list(pd.get("specs", [])),
             steps=int(steps), cfg_scale=float(cfg), seed=int(seed),
             width=int(width), height=int(height), adetailer=bool(adet))
         cdir = paths.character_dir(name)
         character.save_character(cdir, cs)
-        return f"✅ Saved to `{cdir}`", _summary(cs, cdir)
+        msg = f"✅ Saved to `{cdir}`"
+        if cs.approved_poses:
+            try:
+                progress(0.5, desc="Building LoRA datasets…")
+                ddir = paths.character_dataset_dir(name)
+                datasets.build_character_datasets(ddir, cs)
+                msg += f" · datasets built at `{ddir}`"
+            except Exception:
+                msg += " · ⚠️ dataset build failed (see console)"
+                traceback.print_exc()
+        return msg, _summary(cs, cdir)
 
     save["save"].click(_save, inputs=save_inputs,
                        outputs=[save["save_status"], save["summary"]])

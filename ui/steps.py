@@ -25,26 +25,8 @@ STEPS = [
 ]
 
 STYLES = ["realism", "anime", "cartoon"]
-# Native Wan2GP model dropdowns are populated at runtime from the app; choices
-# stay empty here so the panel renders standalone.
-
-
-def _gen_settings():
-    """Shared generation-settings controls (used by Base Gen and Poses)."""
-    c = {}
-    with gr.Accordion("Generation settings", open=False):
-        with gr.Row():
-            c["model"] = gr.Dropdown(label="Model", choices=[], scale=2)
-            c["sampler"] = gr.Dropdown(label="Sampler", choices=[], scale=1)
-        with gr.Row():
-            c["steps"] = gr.Slider(1, 60, value=20, step=1, label="Steps")
-            c["cfg_scale"] = gr.Slider(1.0, 15.0, value=7.0, step=0.5, label="CFG")
-            c["seed"] = gr.Number(value=-1, label="Seed (-1 = random)", precision=0)
-        with gr.Row():
-            c["width"] = gr.Slider(256, 2048, value=512, step=64, label="Width")
-            c["height"] = gr.Slider(256, 2048, value=768, step=64, label="Height")
-        c["adetailer"] = gr.Checkbox(value=True, label="ADetailer face restore (SD/SDXL)")
-    return c
+# Generation settings live in the shared settings bar (ui/settings_bar.py), not
+# per step — base/pose gen read from there.
 
 
 def build_info(visible: bool):
@@ -97,7 +79,6 @@ def build_base(visible: bool):
             c["generate"] = gr.Button("Generate candidates", variant="primary", scale=2)
         c["candidates"] = gr.Gallery(label="Candidates — click to select", columns=4, height=260)
         c["selected_base"] = gr.Image(label="Selected base", type="filepath", height=260)
-        c.update(_gen_settings())
     return g, c
 
 
@@ -141,7 +122,6 @@ def build_poses(visible: bool):
             c["apply_body_to_poses"] = gr.Checkbox(value=True, label="Apply body swap to poses")
         c["generate"] = gr.Button("Generate poses", variant="primary")
         c["pose_gallery"] = gr.Gallery(label="Poses (approve to keep)", columns=4, height=340)
-        c.update(_gen_settings())
     return g, c
 
 

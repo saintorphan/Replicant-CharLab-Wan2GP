@@ -21,7 +21,7 @@ try:  # GPU arbitration with the main Video Generator (see wan2gp-sample)
 except Exception:  # pragma: no cover
     _HAVE_LOCKS = False
 
-from .core import paths
+from .core import character, discovery, faceswap, gen_sd, paths, poses
 from .ui import wizard
 from .ui.styles import CSS
 
@@ -55,6 +55,7 @@ class ReplicantCharLab(WAN2GPPlugin):
         self.request_global("get_state_model_type")
         self.request_global("get_model_def")
         self.request_global("get_default_settings")  # base/pose image generation
+        self.request_global("models_def")             # list native image models
 
         self.add_tab(tab_id=PLUGIN_ID, label=PLUGIN_NAME,
                      component_constructor=self.create_ui)
@@ -86,70 +87,177 @@ class ReplicantCharLab(WAN2GPPlugin):
             release_GPU_ressources(state, PLUGIN_ID)
 
     # -- UI -----------------------------------------------------------------
+    def _native_model_types(self):
+        defs = getattr(self, "models_def", None) or {}
+        try:
+            return [mt for mt in defs if discovery.categorize_native(mt)]
+        except Exception:
+            return []
+
     def create_ui(self, api_session):
         self._api = api_session
+        self._faceswap = None  # lazy FaceSwapPipeline
+        model_choices = discovery.build_model_choices(self._native_model_types())
+        lora_choices = [(m["name"], m["path"]) for m in discovery.discover_sdxl_loras()]
         gr.HTML(f"<style>{CSS}</style>")
         with gr.Column():
-            ui = wizard.build_wizard()
+            ui = wizard.build_wizard(model_choices=model_choices, lora_choices=lora_choices)
         self._wire_enhancer(ui)
-        self._wire_base_gen(ui)
-        # Outputs refreshed when the tab is (re)selected; bounce target is main_tabs.
+        self._wire_generation(ui)
         self.on_tab_outputs = [self.main_tabs] if hasattr(self, "main_tabs") else None
         self._ui = ui
         return ui
 
-    def _wire_base_gen(self, ui):
-        """Step 3: generate base candidates via Wan2GP's API session (image_mode)."""
-        base, prm = ui["components"]["base"], ui["components"]["prompt"]
-        if not (getattr(self, "_api", None) and hasattr(self, "get_default_settings")
-                and hasattr(self, "get_state_model_type")):
-            return  # session/globals unavailable
+    # -- generation backends ------------------------------------------------
+    def _face_pipe(self):
+        if self._faceswap is None:
+            self._faceswap = faceswap.FaceSwapPipeline(str(paths.models_dir() / "face"))
+        return self._faceswap
 
-        def _gen(state, model, pos, neg, count, steps, cfg, seed, width, height,
-                 progress=gr.Progress()):
+    def _gen_image(self, state, model_value, pos, neg, w, h, steps, cfg, seed,
+                   sampler, scheduler, clip_skip):
+        """One image via the routed backend. Returns list of saved paths."""
+        backend, ident = discovery.parse_model_value(model_value)
+        if backend == "native":
+            settings = dict(self.get_default_settings(ident))
+            settings.update({
+                "model_type": ident, "image_mode": 1, "prompt": pos,
+                "negative_prompt": neg or "", "resolution": f"{int(w)}x{int(h)}",
+                "num_inference_steps": int(steps), "guidance_scale": float(cfg),
+                "seed": int(seed), "video_length": 1, "batch_size": 1,
+            })
+            result = self._api.submit_task(settings).result()
+            if result.success and result.generated_files:
+                return list(result.generated_files)
+            if result.errors:
+                raise gr.Error(str(list(result.errors)[0]))
+            return []
+        if backend == "sd":
+            if not self.acquire_gpu(state):
+                return []
+            try:
+                return gen_sd.generate_txt2img(
+                    ident, pos, neg, w, h, steps, cfg, seed,
+                    sampler=sampler or "DPM++ 2M", scheduler=scheduler or "",
+                    clip_skip=int(clip_skip))
+            finally:
+                self.release_gpu(state)
+        raise gr.Error("Select a model from the dropdown first.")
+
+    def _wire_generation(self, ui):
+        c, s = ui["components"], ui["settings"]
+        base, prm, swap, pose = c["base"], c["prompt"], c["swap"], c["poses"]
+        if not getattr(self, "_api", None):
+            return
+
+        import random as _rng
+        SET = [s["model"], s["sampler"], s["scheduler"], s["steps"], s["cfg_scale"],
+               s["clip_skip"], s["seed"], s["width"], s["height"]]
+
+        # -- base candidates --
+        def _gen_base(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
+                      width, height, pos, neg, count, progress=gr.Progress()):
             if not (pos and pos.strip()):
                 raise gr.Error("Build or enhance a positive prompt on step 2 first.")
-            model_type = model or self.get_state_model_type(state)
-            if not model_type:
-                raise gr.Error("Pick an image model (or select one in Video Generator).")
-            import random
-            files = []
-            n = int(count)
+            files, n = [], int(count)
             for i in range(n):
-                s = int(seed) if int(seed) >= 0 else random.randint(0, 2**31 - 1)
-                settings = dict(self.get_default_settings(model_type))
-                settings.update({
-                    "model_type": model_type, "image_mode": 1,
-                    "prompt": pos, "negative_prompt": neg or "",
-                    "resolution": f"{int(width)}x{int(height)}",
-                    "num_inference_steps": int(steps), "guidance_scale": float(cfg),
-                    "seed": s, "video_length": 1, "batch_size": 1,
-                })
-                progress((i, n), desc=f"Generating base {i + 1}/{n}")
-                result = self._api.submit_task(settings).result()
-                if result.success and result.generated_files:
-                    files.extend(result.generated_files)
-                elif result.errors:
-                    raise gr.Error(str(list(result.errors)[0]))
+                sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
+                progress((i, n), desc=f"Base {i + 1}/{n}")
+                files += self._gen_image(state, model, pos, neg, width, height,
+                                         steps, cfg, sd, sampler, scheduler, clip_skip)
             if not files:
                 raise gr.Error("Generation produced no images.")
             return files, files[0]
 
         base["generate"].click(
-            _gen,
-            inputs=[self.state, base["model"], prm["positive_prompt"], prm["negative_prompt"],
-                    base["count"], base["steps"], base["cfg_scale"], base["seed"],
-                    base["width"], base["height"]],
-            outputs=[base["candidates"], base["selected_base"]],
-        )
+            _gen_base,
+            inputs=[self.state] + SET + [prm["positive_prompt"], prm["negative_prompt"],
+                                         base["count"]],
+            outputs=[base["candidates"], base["selected_base"]])
 
         def _pick(evt: gr.SelectData):
             v = evt.value
             if isinstance(v, dict):
                 return v.get("image", {}).get("path") or v.get("path") or gr.update()
             return v if isinstance(v, str) else gr.update()
-
         base["candidates"].select(_pick, outputs=[base["selected_base"]])
+
+        # -- step 4: face swap onto the base (optional) --
+        def _face(state, target_base, face_src, enhancer, strength, blend):
+            if not target_base:
+                raise gr.Error("Generate/select a base image first (step 3).")
+            if not face_src:
+                raise gr.Error("Provide a face source image.")
+            if not self.acquire_gpu(state):
+                return gr.update()
+            try:
+                img = self._face_pipe().swap(
+                    source_path=face_src, target_path=target_base,
+                    enhancer=enhancer or None, blend_ratio=float(blend),
+                    enhancer_strength=float(strength))
+                out = paths.cache_dir() / "swap"; out.mkdir(parents=True, exist_ok=True)
+                p = out / "face_swapped_base.png"; img.save(p)
+                return str(p)
+            finally:
+                self.release_gpu(state)
+        swap["run_face"].click(
+            _face,
+            inputs=[self.state, base["selected_base"], swap["face_source"],
+                    swap["face_enhancer"], swap["face_enhancer_strength"],
+                    swap["face_blend_ratio"]],
+            outputs=[swap["result"]])
+        # the swap result becomes the canonical base
+        swap["result"].change(lambda p: p or gr.update(), inputs=[swap["result"]],
+                              outputs=[base["selected_base"]])
+        swap["run_body"].click(
+            lambda: gr.Info("Body swap (IP-Adapter/ControlNet body double) is the one "
+                            "piece still to wire — coming next."))
+
+        # -- step 5: pose variants (+ mandatory base-face swap) --
+        def _gen_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
+                       width, height, pos, neg, sel_base, progress=gr.Progress()):
+            if not sel_base:
+                raise gr.Error("Generate/select a base image first (step 3).")
+            if not (pos and pos.strip()):
+                raise gr.Error("Need a positive prompt (step 2).")
+            fp = self._face_pipe()
+            gallery, specs = [], []
+            P = poses.POSES
+            for i, ps in enumerate(P):
+                progress((i, len(P)), desc=f"Pose {i + 1}/{len(P)} ({ps.distance}/{ps.angle})")
+                pw, ph = (max(width, height), min(width, height)) if ps.orientation == "landscape" \
+                    else (min(width, height), max(width, height))
+                p_pos = f"{pos}, {ps.description}"
+                p_neg = poses.pose_negative_for(ps.distance, neg)
+                sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
+                imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps, cfg,
+                                       sd, sampler, scheduler, clip_skip)
+                if not imgs:
+                    continue
+                final = imgs[0]
+                try:  # mandatory: apply base face to the pose for identity consistency
+                    if self.acquire_gpu(state):
+                        try:
+                            swapped = fp.swap(source_path=sel_base, target_path=imgs[0])
+                            out = paths.cache_dir() / "poses"; out.mkdir(parents=True, exist_ok=True)
+                            fp_path = out / f"pose_{i + 1:03d}.png"; swapped.save(fp_path)
+                            final = str(fp_path)
+                        finally:
+                            self.release_gpu(state)
+                except Exception:
+                    traceback.print_exc()
+                gallery.append(final)
+                specs.append({"distance": ps.distance, "angle": ps.angle,
+                              "orientation": ps.orientation})
+            if not gallery:
+                raise gr.Error("No poses were generated.")
+            return gallery, {"poses": gallery, "specs": specs}
+
+        pose["generate"].click(
+            _gen_poses,
+            inputs=[self.state] + SET + [prm["positive_prompt"], prm["negative_prompt"],
+                                         base["selected_base"]],
+            outputs=[pose["pose_gallery"], ui["poses_state"]])
 
     def _wire_enhancer(self, ui):
         """Wire the Prompt step's Enhance buttons to Wan2GP's native enhancer."""
