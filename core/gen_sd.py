@@ -202,8 +202,17 @@ def _get_ip_inpaint(checkpoint_path):
         pipe.load_ip_adapter("h94/IP-Adapter", subfolder="sdxl_models",
                              weight_name="ip-adapter-plus_sdxl_vit-h.safetensors",
                              image_encoder_folder="models/image_encoder")
+    # 12 GB-class cards can't hold the full SDXL inpaint + IP-Adapter (UNet + 2 text
+    # encoders + image encoder + VAE) resident. Model CPU offload keeps only the
+    # active submodule on GPU (per-module, not the slow per-layer sequential variant),
+    # which fits comfortably. Don't call .to("cuda") alongside it — they conflict.
     try:
-        pipe.to("cuda")
+        import torch
+        free, total = torch.cuda.mem_get_info()
+        if total <= 16 * 1024 ** 3:
+            pipe.enable_model_cpu_offload()
+        else:
+            pipe.to("cuda")
     except Exception:
         pipe.enable_model_cpu_offload()
     try:
