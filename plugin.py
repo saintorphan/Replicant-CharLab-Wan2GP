@@ -209,9 +209,37 @@ class ReplicantCharLab(WAN2GPPlugin):
         # the swap result becomes the canonical base
         swap["result"].change(lambda p: p or gr.update(), inputs=[swap["result"]],
                               outputs=[base["selected_base"]])
+        def _body(state, model, sel_base, body_src, ip_scale, denoise, body_cfg,
+                  cn_strength, steps, seed, sampler, scheduler, pos, neg,
+                  progress=gr.Progress()):
+            if not sel_base:
+                raise gr.Error("Generate/select a base image first (step 3).")
+            if not body_src:
+                raise gr.Error("Provide a body source image.")
+            backend, ident = discovery.parse_model_value(model)
+            if backend != "sd":
+                raise gr.Error("Body swap needs an SDXL/Pony/Illustrious model selected "
+                               "(ControlNet + IP-Adapter are SD-only).")
+            if not self.acquire_gpu(state):
+                return gr.update()
+            try:
+                progress(0.1, desc="Segmenting + posing + body double…")
+                out = gen_sd.body_swap(
+                    ident, sel_base, body_src, pos, neg,
+                    cn_strength=float(cn_strength), ip_scale=float(ip_scale),
+                    denoise=float(denoise), cfg=float(body_cfg), steps=int(steps),
+                    seed=int(seed), sampler=sampler, scheduler=scheduler)
+                return out or gr.update()
+            finally:
+                self.release_gpu(state)
+
         swap["run_body"].click(
-            lambda: gr.Info("Body swap (IP-Adapter/ControlNet body double) is the one "
-                            "piece still to wire — coming next."))
+            _body,
+            inputs=[self.state, s["model"], base["selected_base"], swap["body_source"],
+                    swap["body_ip_scale"], swap["body_denoise"], swap["body_cfg"],
+                    swap["body_cn_strength"], s["steps"], s["seed"], s["sampler"],
+                    s["scheduler"], prm["positive_prompt"], prm["negative_prompt"]],
+            outputs=[swap["result"]])
 
         # -- step 5: pose variants (+ mandatory base-face swap) --
         def _gen_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,

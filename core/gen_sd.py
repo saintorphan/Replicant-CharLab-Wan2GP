@@ -90,3 +90,67 @@ def generate_txt2img(checkpoint_path, prompt, negative, width, height, steps, cf
         except Exception:
             logger.warning("failed saving SD image %d", i, exc_info=True)
     return saved
+
+
+class _ProjMgr:
+    """Minimal project manager for ImagePipeline — only get_project_path is used."""
+    def __init__(self, root):
+        self._root = Path(root)
+
+    def get_project_path(self, name):
+        p = self._root / (name or "replicant")
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+
+def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
+              cn_strength=0.7, ip_scale=0.8, denoise=0.75, cfg=7.0, steps=30,
+              seed=-1, sampler="DPM++ 3M SDE", scheduler="Karras") -> str | None:
+    """Body double: segment the person in the base, extract an openpose control
+    image, then inpaint a new body with the source person's identity (ControlNet
+    openpose + IP-Adapter faceid_plus). SD-family checkpoints only.
+
+    Ported from SupremeDiffusion's BodyDoubleWorker orchestration. Heavy: pulls
+    BiRefNet (segment), openpose annotator, ControlNet-openpose and IP-Adapter
+    (auto-downloaded). Returns the result image path."""
+    import os
+    from PIL import Image
+    _import_pipeline_cls()  # ensure SD_CHECKOUT on sys.path
+    from supremediffusion.core.image_pipeline import ImageGenerationPipeline
+    from supremediffusion.config.project_config import ProjectConfig
+    from supremediffusion.models.segmentation import segment_foreground
+    from supremediffusion.models.controlnet_types import (run_preprocessor,
+                                                          preprocessor_overrides_for)
+
+    models_root = str(Path(SD_CHECKOUT) / "models")
+    cfg_obj = ProjectConfig()
+    cfg_obj.bodydouble_checkpoint = checkpoint_path
+    cfg_obj.bodydouble_controlnet_type = "openpose"
+    cfg_obj.bodydouble_controlnet_strength = float(cn_strength)
+    cfg_obj.bodydouble_ip_adapter_variant = "faceid_plus"
+    cfg_obj.bodydouble_ip_adapter_scale = float(ip_scale)
+    cfg_obj.bodydouble_denoising_strength = float(denoise)
+    cfg_obj.bodydouble_cfg_scale = float(cfg)
+    cfg_obj.bodydouble_steps = int(steps)
+    cfg_obj.bodydouble_sampler = sampler or "DPM++ 3M SDE"
+    cfg_obj.bodydouble_scheduler = scheduler or "Karras"
+    cfg_obj.bodydouble_prompt = prompt or ""
+    cfg_obj.bodydouble_negative_prompt = negative or ""
+    cfg_obj.bodydouble_seed = int(seed)
+
+    mask = segment_foreground(base_path, models_root)
+    try:
+        target_img = Image.open(base_path).convert("RGB")
+        control = [run_preprocessor("openpose", target_img,
+                                    **preprocessor_overrides_for("openpose", cfg_obj))]
+        facade = ImageGenerationPipeline(get_pipeline(), _ProjMgr(paths.cache_dir() / "body_swap"))
+        results = facade.run_body_double(
+            project_name="replicant", target_image=base_path, mask=mask,
+            source_person=source_person_path, control_images=control,
+            config=cfg_obj, num_images=1)
+        return results[0] if results else None
+    finally:
+        try:
+            os.unlink(mask)
+        except Exception:
+            pass
