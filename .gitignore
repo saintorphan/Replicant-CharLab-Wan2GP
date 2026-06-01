@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Generated character data / datasets / models
+library/characters/
+datasets/
+*.safetensors
+*.ckpt
+*.gguf
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
