@@ -41,7 +41,7 @@ button.replicant-tabbtn {
 
 #replicant-rail { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 #replicant-rail button {
-    flex: 1 1 0; min-width: 90px; font-size: 12px; padding: 6px 4px;
+    flex: 1 1 0; min-width: 90px; font-size: 24px; padding: 6px 4px;
     border-radius: 8px;
 }
 
