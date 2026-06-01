@@ -97,13 +97,20 @@ def build_wizard(model_choices=None, lora_choices=None):
     back_btn.click(lambda s, ref: _nav(s, ref, -1), inputs=[step, reference], outputs=nav_outputs)
     next_btn.click(lambda s, ref: _nav(s, ref, +1), inputs=[step, reference], outputs=nav_outputs)
 
-    # Reflect the skip on the rail: grey out Base Gen when a reference is set.
+    # A reference image becomes the base (so Face/Body has something to work on)
+    # AND greys Base Gen on the rail.
+    base_sel = comps["base"]["selected_base"]
+
     def _ref_changed(ref):
         if ref:
-            return gr.update(value="③ Base (skipped)", interactive=False)
-        return gr.update(value=STEPS[BASE_IDX][1], interactive=True)
+            return gr.update(value="③ Base (skipped)", interactive=False), ref
+        return gr.update(value=STEPS[BASE_IDX][1], interactive=True), gr.update()
 
-    reference.change(_ref_changed, inputs=[reference], outputs=[rail[BASE_IDX]])
+    reference.change(_ref_changed, inputs=[reference], outputs=[rail[BASE_IDX], base_sel])
+
+    # Keep the Face/Body preview mirroring the current base (ref / gen / swap result).
+    base_sel.change(lambda p: p or gr.update(), inputs=[base_sel],
+                    outputs=[comps["swap"]["base_preview"]])
 
     _wire_load_save(comps, settings, poses_state)
 

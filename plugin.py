@@ -308,6 +308,10 @@ class ReplicantCharLab(WAN2GPPlugin):
         def _enhance(state, text, progress=gr.Progress()):
             if not (text and text.strip()):
                 raise gr.Error("Enter or seed a prompt first.")
+            # The enhancer load / first-run model download happens inside Wan2GP and
+            # doesn't stream to this bar — surface a status so it doesn't look frozen.
+            progress(0.0, desc="Enhancing with Qwen3.5… (first run downloads the model — "
+                               "watch the console)")
             model_type = self.get_state_model_type(state)
             model_def = self.get_model_def(model_type)
             out = self.exec_prompt_enhancer_engine(
