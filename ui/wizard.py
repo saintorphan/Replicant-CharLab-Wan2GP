@@ -7,6 +7,7 @@ from pathlib import Path
 
 import gradio as gr
 
+from ..core import character, paths
 from .prereqs import build_prereqs
 from .steps import BUILDERS, STEPS
 
@@ -88,5 +89,69 @@ def build_wizard():
     back_btn.click(lambda s, ref: _nav(s, ref, -1), inputs=[step, reference], outputs=nav_outputs)
     next_btn.click(lambda s, ref: _nav(s, ref, +1), inputs=[step, reference], outputs=nav_outputs)
 
+    _wire_load_save(comps)
+
     return {"step": step, "groups": groups, "rail": rail,
             "nav": (back_btn, next_btn), "components": comps, "prereqs": prereqs}
+
+
+def _summary(cs, cdir) -> str:
+    lines = [f"**{cs.name}** — {cs.style}", f"`{cdir}`", ""]
+    lines.append(f"- Description: {cs.description or '—'}")
+    lines.append(f"- Base image: {'✅' if cs.selected_base else '—'}")
+    lines.append(f"- Face source: {'✅' if cs.face_source_path else '—'}  ·  "
+                 f"Body source: {'✅' if cs.body_source_path else '—'}")
+    lines.append(f"- Approved poses: {len(cs.approved_poses)}")
+    lines.append(f"- Trigger word: `{cs.trigger}`")
+    return "\n".join(lines)
+
+
+def _wire_load_save(comps):
+    info, prm, base, swap = (comps["info"], comps["prompt"],
+                             comps["base"], comps["swap"])
+    save = comps["save"]
+
+    info["refresh_btn"].click(lambda: gr.update(choices=paths.list_characters()),
+                              outputs=[info["load_existing"]])
+
+    load_outputs = [info["name"], info["description"], info["style"],
+                    prm["positive_prompt"], prm["negative_prompt"],
+                    info["reference_image"], base["selected_base"],
+                    base["steps"], base["cfg_scale"], base["seed"],
+                    base["width"], base["height"], base["adetailer"]]
+
+    def _load(sel):
+        if not sel:
+            return [gr.update()] * len(load_outputs)
+        cs = character.load_character(paths.character_dir(sel))
+        return [cs.name, cs.description, cs.style, cs.positive_prompt, cs.negative_prompt,
+                cs.reference_image or None, cs.selected_base or None,
+                cs.steps, cs.cfg_scale, cs.seed, cs.width, cs.height, cs.adetailer]
+
+    info["load_btn"].click(_load, inputs=[info["load_existing"]], outputs=load_outputs)
+
+    save_inputs = [info["name"], info["description"], info["style"],
+                   prm["positive_prompt"], prm["negative_prompt"],
+                   info["reference_image"], base["selected_base"],
+                   swap["face_source"], swap["body_source"],
+                   base["steps"], base["cfg_scale"], base["seed"],
+                   base["width"], base["height"], base["adetailer"]]
+
+    def _save(name, desc, style, pos, neg, ref, sbase, face_src, body_src,
+              steps, cfg, seed, width, height, adet):
+        if not (name and name.strip()):
+            return "⚠️ Enter a character name first.", gr.update()
+        cs = character.CharacterState(
+            name=name, description=desc or "", style=style,
+            positive_prompt=pos or "", negative_prompt=neg or "",
+            reference_image=ref or "", selected_base=(sbase or ref or ""),
+            face_source_path=face_src or "", body_source_path=body_src or "",
+            face_swap_enabled=bool(face_src), body_swap_enabled=bool(body_src),
+            steps=int(steps), cfg_scale=float(cfg), seed=int(seed),
+            width=int(width), height=int(height), adetailer=bool(adet))
+        cdir = paths.character_dir(name)
+        character.save_character(cdir, cs)
+        return f"✅ Saved to `{cdir}`", _summary(cs, cdir)
+
+    save["save"].click(_save, inputs=save_inputs,
+                       outputs=[save["save_status"], save["summary"]])
