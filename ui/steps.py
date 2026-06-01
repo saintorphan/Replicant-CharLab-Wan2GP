@@ -15,14 +15,13 @@ import gradio as gr
 from ..core import paths, poses
 
 STEPS = [
-    ("info", "① Info"),
-    ("prompt", "② Prompt"),
-    ("base", "③ Base Gen"),
-    ("swap", "④ Face / Body"),
-    ("inpaint", "⑤ Inpaint"),
-    ("poses", "⑥ Poses"),
-    ("save", "⑦ Save"),
-    ("train", "⑧ Train"),
+    ("setup", "① Setup"),
+    ("base", "② Base Gen"),
+    ("swap", "③ Face / Body"),
+    ("inpaint", "④ Inpaint"),
+    ("poses", "⑤ Poses"),
+    ("save", "⑥ Save"),
+    ("train", "⑦ Train"),
 ]
 
 STYLES = ["realism", "anime", "cartoon"]
@@ -44,29 +43,36 @@ def _init_gallery(init, key):
     return out or None
 
 
-def build_info(visible: bool, init=None):
+def build_setup(visible: bool, init=None):
+    """Combined Info + Prompt page."""
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
-        gr.Markdown("### ① Character Info")
+        gr.Markdown("### ① Setup")
         c = {}
         with gr.Row():
-            c["load_existing"] = gr.Dropdown(label="Load existing character",
-                                             choices=paths.list_characters(), scale=4)
-            c["load_btn"] = gr.Button("Load", scale=0, min_width=90)
-            c["refresh_btn"] = gr.Button("⟳", scale=0, min_width=44)
-        with gr.Row():
             with gr.Column(scale=1):
+                with gr.Row():
+                    c["load_existing"] = gr.Dropdown(label="Load existing character",
+                                                     choices=paths.list_characters(), scale=4)
+                    c["load_btn"] = gr.Button("Load", scale=0, min_width=80)
+                    c["refresh_btn"] = gr.Button("⟳", scale=0, min_width=44)
                 c["name"] = gr.Textbox(label="Character name", placeholder="e.g. Nova")
-                c["description"] = gr.Textbox(label="Description", lines=5,
+                c["description"] = gr.Textbox(label="Description", lines=3,
                     placeholder="a voluptuous woman with brown hair and glasses")
                 c["style"] = gr.Radio(STYLES, value="realism", label="Style")
+                gr.Markdown("**Prompts**  <sub>(enhancement uses the abliterated Qwen3.5 enhancer)</sub>")
+                with gr.Row():
+                    c["seed_prompt"] = gr.Button("Build seed from description")
+                    c["enhance_pos"] = gr.Button("✨ Enhance positive", variant="primary")
+                    c["enhance_neg"] = gr.Button("✨ Enhance negative")
+                c["positive_prompt"] = gr.Textbox(label="Positive prompt", lines=4)
+                c["negative_prompt"] = gr.Textbox(label="Negative prompt", lines=3)
             with gr.Column(scale=1):
-                gr.Markdown("<sub>A reference image skips **Base Gen** — it becomes the "
-                            "base directly.</sub>")
-                c["reference_image"] = gr.Image(label="Reference image (optional)",
-                                                type="filepath", height=360,
-                                                value=_init_img(init, "info.reference_image"))
-        gr.Markdown("<sub>All fields autosave; restored next launch. LoRAs are picked "
-                    "in the Generation settings bar.</sub>")
+                c["reference_image"] = gr.Image(label="Reference image (optional — becomes the base)",
+                                                type="filepath", height=760,
+                                                show_fullscreen_button=True,
+                                                value=_init_img(init, "setup.reference_image"))
+        gr.Markdown("<sub>All fields autosave; restored next launch. LoRAs are picked in "
+                    "the Generation settings bar.</sub>")
         with gr.Row():
             c["clear_btn"] = gr.Button("🗑 Clear Wizard", variant="stop", scale=0, min_width=160)
             c["clear_files"] = gr.Checkbox(value=False,
@@ -74,34 +80,19 @@ def build_info(visible: bool, init=None):
     return g, c
 
 
-def build_prompt(visible: bool, init=None):
-    with gr.Group(visible=visible, elem_classes="replicant-step") as g:
-        gr.Markdown("### ② Prompts")
-        gr.Markdown("<sub>Enhancement uses Wan2GP's abliterated Qwen3.5 enhancer.</sub>")
-        c = {}
-        with gr.Row():
-            c["seed_prompt"] = gr.Button("Build seed from description")
-            c["enhance_pos"] = gr.Button("✨ Enhance positive", variant="primary")
-            c["enhance_neg"] = gr.Button("✨ Enhance negative")
-        c["positive_prompt"] = gr.Textbox(label="Positive prompt", lines=4,
-            placeholder="Seeded from the description + framing, then enhanced.")
-        c["negative_prompt"] = gr.Textbox(label="Negative prompt", lines=3)
-    return g, c
-
-
 def build_base(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
-        gr.Markdown("### ③ Base Generation")
+        gr.Markdown("### ② Base Generation")
         c = {}
-        c["pos"] = gr.Textbox(label="Positive prompt (carried from step 2, editable)",
-                              lines=2, value=(init or {}).get("prompt.positive_prompt", ""))
-        c["neg"] = gr.Textbox(label="Negative prompt (carried from step 2, editable)",
-                              lines=2, value=(init or {}).get("prompt.negative_prompt", ""))
+        c["pos"] = gr.Textbox(label="Positive prompt (carried from Setup, editable)",
+                              lines=2, value=(init or {}).get("setup.positive_prompt", ""))
+        c["neg"] = gr.Textbox(label="Negative prompt (carried from Setup, editable)",
+                              lines=2, value=(init or {}).get("setup.negative_prompt", ""))
         with gr.Row():
             with gr.Column(scale=0, min_width=170):
                 c["ref_avatar"] = gr.Image(label="Reference", type="filepath", height=160,
                                            interactive=False, show_fullscreen_button=True,
-                                           value=_init_img(init, "info.reference_image"))
+                                           value=_init_img(init, "setup.reference_image"))
             with gr.Column():
                 gr.Markdown("<sub>**Generate** fresh candidates (txt2img), **Reimagine** the "
                             "reference (img2img — SD models), or just **skip** — the "
@@ -129,14 +120,14 @@ def build_base(visible: bool, init=None):
                                               interactive=False, show_fullscreen_button=True,
                                               value=_init_img(init, "base.selected_base"))
                 c["revert_ref"] = gr.Button("↩ Revert to Reference",
-                                            interactive=bool(_init_img(init, "info.reference_image")))
+                                            interactive=bool(_init_img(init, "setup.reference_image")))
         c["picked"] = gr.State(None)  # clicked candidate path (no base change until a button)
     return g, c
 
 
 def build_swap(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
-        gr.Markdown("### ④ Face / Body Swap")
+        gr.Markdown("### ③ Face / Body Swap")
         gr.Markdown("<sub>Run a swap to **preview** it, then **Accept** (commit to base) or "
                     "**Retry**. The other swap and step navigation lock until you Accept, so "
                     "a bad swap can't corrupt the base.</sub>")
@@ -199,7 +190,7 @@ def build_swap(visible: bool, init=None):
 
 def build_inpaint(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
-        gr.Markdown("### ⑤ Inpaint / Touch-ups")
+        gr.Markdown("### ④ Inpaint / Touch-ups")
         gr.Markdown("<sub>Optional final fixes on the base before posing. Load the base, "
                     "paint over the area to redo, describe the fix, Run, then Use as Base. "
                     "(SDXL/Pony/Illustrious models.)</sub>")
@@ -272,5 +263,5 @@ def build_train(visible: bool, init=None):
     return g, c
 
 
-BUILDERS = [build_info, build_prompt, build_base, build_swap, build_inpaint,
+BUILDERS = [build_setup, build_base, build_swap, build_inpaint,
             build_poses, build_save, build_train]

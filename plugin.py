@@ -167,7 +167,7 @@ class ReplicantCharLab(WAN2GPPlugin):
 
     def _wire_generation(self, ui):
         c, s = ui["components"], ui["settings"]
-        base, prm, swap, pose = c["base"], c["prompt"], c["swap"], c["poses"]
+        base, prm, swap, pose = c["base"], c["setup"], c["swap"], c["poses"]
         if not getattr(self, "_api", None):
             return
 
@@ -469,7 +469,7 @@ class ReplicantCharLab(WAN2GPPlugin):
 
     def _wire_enhancer(self, ui):
         """Wire the Prompt step's Enhance buttons to Wan2GP's native enhancer."""
-        prm = ui["components"]["prompt"]
+        prm = ui["components"]["setup"]
         if not all(hasattr(self, a) for a in
                    ("exec_prompt_enhancer_engine", "get_state_model_type", "get_model_def", "state")):
             return  # globals not injected (older host) — leave buttons inert

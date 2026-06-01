@@ -73,7 +73,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
 
     sw, sh = settings["width"], settings["height"]
     nav_outputs = groups + rail + [back_btn, next_btn, step, sw, sh]
-    _BASE_STEP = 2  # ③ Base Gen — forced portrait + locked dims
+    _BASE_STEP = 1  # ② Base Gen — forced portrait + locked dims
 
     def _set_step(target: int):
         target = max(0, min(_N - 1, int(target)))
@@ -89,7 +89,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
             updates += [gr.update(interactive=True), gr.update(interactive=True)]
         return updates
 
-    reference = comps["info"]["reference_image"]
+    reference = comps["setup"]["reference_image"]
 
     # Base Gen is no longer skipped for a reference — step 3 shows the reference and
     # offers Reimagine (img2img) or skip-as-base.
@@ -121,7 +121,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
 
     # Carry prompts onto Base Gen and keep them in sync both ways (settles because
     # Gradio doesn't re-fire .change when the value is unchanged).
-    prm, bp, bn = comps["prompt"], comps["base"]["pos"], comps["base"]["neg"]
+    prm, bp, bn = comps["setup"], comps["base"]["pos"], comps["base"]["neg"]
     prm["positive_prompt"].change(lambda v: v, inputs=[prm["positive_prompt"]], outputs=[bp])
     prm["negative_prompt"].change(lambda v: v, inputs=[prm["negative_prompt"]], outputs=[bn])
     bp.change(lambda v: v, inputs=[bp], outputs=[prm["positive_prompt"]])
@@ -137,8 +137,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
 
 # SCALAR fields autosaved/restored via post-hoc .value. Keyed "<group>.<name>".
 _PERSIST_SPEC = {
-    "info": ["name", "description", "style"],
-    "prompt": ["positive_prompt", "negative_prompt"],
+    "setup": ["name", "description", "style", "positive_prompt", "negative_prompt"],
     "base": ["count", "denoise"],
     "settings": ["model", "sampler", "scheduler", "steps", "cfg_scale", "clip_skip",
                  "seed", "width", "height", "adetailer", "loras", "lora_multipliers"],
@@ -150,7 +149,7 @@ _PERSIST_SPEC = {
 # IMAGE/gallery fields persisted separately: copied to a stable dir and restored
 # via the component CONSTRUCTOR (post-hoc .value on a gr.Image breaks ImageData
 # validation when it's also an event input). Key -> (group, name).
-_IMAGE_FIELDS = [("info.reference_image", "info", "reference_image"),
+_IMAGE_FIELDS = [("setup.reference_image", "setup", "reference_image"),
                  ("base.selected_base", "base", "selected_base"),
                  ("swap.face_source", "swap", "face_source"),
                  ("swap.body_source", "swap", "body_source")]
@@ -246,8 +245,8 @@ def _wire_persistence(comps, settings, poses_state, init):
         gal.change(_save_gal, inputs=[gal], outputs=[])
 
     # --- Clear Wizard: reset everything + wipe persisted state/files ---
-    clear_btn = comps["info"].get("clear_btn")
-    clear_files = comps["info"].get("clear_files")
+    clear_btn = comps["setup"].get("clear_btn")
+    clear_files = comps["setup"].get("clear_files")
     if clear_btn is not None:
         import shutil
         clear_outputs = fields + img_comps + ([gal] if gal is not None else []) + [poses_state]
@@ -275,7 +274,7 @@ def _summary(cs, cdir) -> str:
 
 
 def _wire_load_save(comps, settings, poses_state):
-    info, prm, base, swap = (comps["info"], comps["prompt"],
+    info, prm, base, swap = (comps["setup"], comps["setup"],
                              comps["base"], comps["swap"])
     save = comps["save"]
 
