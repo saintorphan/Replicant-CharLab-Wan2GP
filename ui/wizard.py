@@ -7,6 +7,7 @@ from pathlib import Path
 
 import gradio as gr
 
+from .prereqs import build_prereqs
 from .steps import BUILDERS, STEPS
 
 _ASSETS = Path(__file__).resolve().parent.parent / "assets"
@@ -36,6 +37,9 @@ def build_wizard():
     buttons), ``nav`` (back/next buttons), and ``components`` (per-step widget
     dicts keyed by step id) so the plugin can wire generation/save logic."""
     gr.HTML(_banner_html())
+
+    # Prerequisites (directories + models) ----------------------------------
+    prereqs = build_prereqs()
 
     # Step rail -------------------------------------------------------------
     rail = []
@@ -74,4 +78,4 @@ def build_wizard():
     next_btn.click(lambda s: _set_step(s + 1), inputs=[step], outputs=nav_outputs)
 
     return {"step": step, "groups": groups, "rail": rail,
-            "nav": (back_btn, next_btn), "components": comps}
+            "nav": (back_btn, next_btn), "components": comps, "prereqs": prereqs}

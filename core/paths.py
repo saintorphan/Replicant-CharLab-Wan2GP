@@ -1,16 +1,18 @@
 """Filesystem layout for Replicant Character Lab.
 
-On first run the plugin creates its data directories under the Wan2GP root:
+Three roots, each independently overridable from the wizard's Directories panel
+and persisted to ``<wan2gp_root>/.replicant_charlab.json`` so the choice survives
+restarts:
 
-    <wan2gp_root>/character_lab/
-        characters/        # one sub-dir per saved character (character.json, base.png, poses/, datasets/)
-        loras/             # trained character LoRAs land here
-        .cache/            # scratch (crops, candidate gens) -- safe to wipe
+    characters_dir   default <wan2gp_root>/character_lab/characters
+    datasets_dir     default <wan2gp_root>/character_lab/datasets   (one sub-dir per character)
+    models_dir       default <wan2gp_root>/character_lab/models     (download buttons stash here)
 
-The root can be overridden with the REPLICANT_LAB_DIR environment variable.
+REPLICANT_LAB_DIR overrides the default root for all three at once.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -18,50 +20,100 @@ from pathlib import Path
 logger = logging.getLogger("replicant.paths")
 
 _DEFAULT_SUBDIR = "character_lab"
+_CONFIG_NAME = ".replicant_charlab.json"
+_KEYS = ("characters_dir", "datasets_dir", "models_dir")
+_config: dict | None = None
 
+
+# --- config persistence ----------------------------------------------------
+
+def _config_path() -> Path:
+    # Stable location (cwd = Wan2GP root), independent of the configurable dirs.
+    return Path(os.getcwd()) / _CONFIG_NAME
+
+
+def load_config() -> dict:
+    global _config
+    if _config is None:
+        try:
+            _config = json.loads(_config_path().read_text())
+        except Exception:
+            _config = {}
+    return _config
+
+
+def save_config() -> None:
+    try:
+        _config_path().write_text(json.dumps(load_config(), indent=2))
+    except Exception:
+        logger.warning("Could not write %s", _config_path(), exc_info=True)
+
+
+def set_dirs(*, characters=None, datasets=None, models=None) -> None:
+    """Override any of the three roots (absolute paths) and persist."""
+    cfg = load_config()
+    for key, val in (("characters_dir", characters), ("datasets_dir", datasets),
+                     ("models_dir", models)):
+        if val:
+            cfg[key] = str(Path(val).expanduser())
+    save_config()
+    ensure_dirs()
+
+
+# --- roots -----------------------------------------------------------------
 
 def lab_root() -> Path:
-    """Resolve the Character Lab root. Honors REPLICANT_LAB_DIR; otherwise sits
-    under the Wan2GP working directory (cwd when wgp.py runs)."""
     override = os.environ.get("REPLICANT_LAB_DIR")
     if override:
         return Path(override).expanduser()
     return Path(os.getcwd()) / _DEFAULT_SUBDIR
 
 
+def _dir(key: str, default_leaf: str) -> Path:
+    val = load_config().get(key)
+    return Path(val).expanduser() if val else lab_root() / default_leaf
+
+
 def characters_dir() -> Path:
-    return lab_root() / "characters"
+    return _dir("characters_dir", "characters")
 
 
-def loras_dir() -> Path:
-    return lab_root() / "loras"
+def datasets_dir() -> Path:
+    return _dir("datasets_dir", "datasets")
+
+
+def models_dir() -> Path:
+    return _dir("models_dir", "models")
 
 
 def cache_dir() -> Path:
     return lab_root() / ".cache"
 
 
+def _safe(name: str) -> str:
+    s = "".join(c if (c.isalnum() or c in "-_ ") else "_" for c in (name or "")).strip()
+    return s or "unnamed"
+
+
 def character_dir(name: str) -> Path:
-    """Directory for a single named character (sanitized)."""
-    safe = "".join(c if (c.isalnum() or c in "-_ ") else "_" for c in (name or "")).strip()
-    return characters_dir() / (safe or "unnamed")
+    return characters_dir() / _safe(name)
+
+
+def character_dataset_dir(name: str) -> Path:
+    return datasets_dir() / _safe(name)
 
 
 def ensure_dirs() -> Path:
-    """Create the Character Lab directory tree if missing. Idempotent; called on
-    plugin setup (first install creates it, later runs are no-ops). Returns root."""
-    root = lab_root()
-    for d in (characters_dir(), loras_dir(), cache_dir()):
+    """Create the directory tree if missing. Idempotent; called on plugin setup."""
+    for d in (characters_dir(), datasets_dir(), models_dir(), cache_dir()):
         try:
             d.mkdir(parents=True, exist_ok=True)
         except Exception:
             logger.warning("Could not create %s", d, exc_info=True)
-    logger.info("Replicant Character Lab root: %s", root)
-    return root
+    return lab_root()
 
 
 def list_characters() -> list[str]:
-    """Names of saved characters (dirs containing a character.json)."""
     cdir = characters_dir()
     if not cdir.is_dir():
         return []
