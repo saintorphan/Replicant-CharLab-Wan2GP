@@ -16,7 +16,7 @@ from ..core import paths, poses
 
 STEPS = [
     ("setup", "① Setup"),
-    ("base", "② Base Gen"),
+    ("base", "② Baseline"),
     ("swap", "③ Face / Body"),
     ("inpaint", "④ Inpaint"),
     ("poses", "⑤ Poses"),
@@ -82,28 +82,27 @@ def build_setup(visible: bool, init=None):
 
 def build_base(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
-        gr.Markdown("### ② Base Generation")
+        gr.Markdown("### ② Baseline")
         c = {}
-        c["pos"] = gr.Textbox(label="Positive prompt (carried from Setup, editable)",
-                              lines=2, value=(init or {}).get("setup.positive_prompt", ""))
-        c["neg"] = gr.Textbox(label="Negative prompt (carried from Setup, editable)",
-                              lines=2, value=(init or {}).get("setup.negative_prompt", ""))
         with gr.Row():
-            with gr.Column(scale=0, min_width=170):
-                c["ref_avatar"] = gr.Image(label="Reference", type="filepath", height=160,
-                                           interactive=False, show_fullscreen_button=True,
-                                           value=_init_img(init, "setup.reference_image"))
-            with gr.Column():
-                gr.Markdown("<sub>**Generate** fresh candidates (txt2img), **Reimagine** the "
-                            "reference (img2img — SD models), or just **skip** — the "
-                            "reference passes through as the base.</sub>")
+            with gr.Column(scale=1):
+                c["pos"] = gr.Textbox(label="Positive prompt (carried from Setup, editable)",
+                                      lines=6, value=(init or {}).get("setup.positive_prompt", ""))
+                c["neg"] = gr.Textbox(label="Negative prompt (carried from Setup, editable)",
+                                      lines=4, value=(init or {}).get("setup.negative_prompt", ""))
+            with gr.Column(scale=1):
+                gr.Markdown("**Generate (txt2img)** — fresh candidates from the prompt.")
+                c["count"] = gr.Slider(1, 8, value=4, step=1, label="Candidates")
+                c["generate"] = gr.Button("Generate candidates (txt2img)", variant="primary")
+                gr.Markdown("**Reimagine (img2img)** — re-render the reference (SD models). "
+                            "Skip both and the reference passes through as the base.")
                 with gr.Row():
-                    c["count"] = gr.Slider(1, 8, value=4, step=1, label="Candidates")
+                    c["ref_avatar"] = gr.Image(label="Reference", type="filepath", height=160,
+                                               interactive=False, show_fullscreen_button=True,
+                                               value=_init_img(init, "setup.reference_image"))
                     c["denoise"] = gr.Slider(0.2, 1.0, value=0.6, step=0.05,
                                              label="Reimagine denoise")
-                with gr.Row():
-                    c["generate"] = gr.Button("Generate candidates (txt2img)", variant="primary")
-                    c["reimagine"] = gr.Button("Reimagine reference (img2img)")
+                c["reimagine"] = gr.Button("Reimagine reference (img2img)")
         with gr.Row():
             with gr.Column(scale=2):
                 # Tall enough for two full rows of portrait candidates (3 cols);
