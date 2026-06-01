@@ -21,7 +21,7 @@ try:  # GPU arbitration with the main Video Generator (see wan2gp-sample)
 except Exception:  # pragma: no cover
     _HAVE_LOCKS = False
 
-from .core import character, discovery, faceswap, gen_sd, paths, poses
+from .core import character, discovery, faceswap, gen_sd, models, paths, poses
 from .ui import wizard
 from .ui.styles import CSS
 
@@ -85,6 +85,14 @@ class ReplicantCharLab(WAN2GPPlugin):
     def release_gpu(self, state):
         if _HAVE_LOCKS:
             release_GPU_ressources(state, PLUGIN_ID)
+
+    @staticmethod
+    def _require(keys, what):
+        """Gate a GPU action on explicitly-downloaded models — never auto-pull."""
+        miss = models.missing(keys)
+        if miss:
+            raise gr.Error(f"{what} needs models you haven't downloaded yet — get them "
+                           f"in Prerequisites → Models first: " + ", ".join(miss))
 
     # -- UI -----------------------------------------------------------------
     def _native_model_types(self):
@@ -188,6 +196,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 raise gr.Error("Generate/select a base image first (step 3).")
             if not face_src:
                 raise gr.Error("Provide a face source image.")
+            self._require(["inswapper_128", "buffalo_l"], "Face swap")
             if not self.acquire_gpu(state):
                 return gr.update()
             try:
@@ -220,6 +229,7 @@ class ReplicantCharLab(WAN2GPPlugin):
             if backend != "sd":
                 raise gr.Error("Body swap needs an SDXL/Pony/Illustrious model selected "
                                "(ControlNet + IP-Adapter are SD-only).")
+            self._require(models.BODY_SWAP_KEYS + ["controlnet_openpose_sdxl"], "Body swap")
             if not self.acquire_gpu(state):
                 return gr.update()
             try:
@@ -248,6 +258,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 raise gr.Error("Generate/select a base image first (step 3).")
             if not (pos and pos.strip()):
                 raise gr.Error("Need a positive prompt (step 2).")
+            self._require(["inswapper_128", "buffalo_l"], "Pose generation (base-face swap)")
             fp = self._face_pipe()
             gallery, specs = [], []
             P = poses.POSES

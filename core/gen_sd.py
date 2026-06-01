@@ -14,7 +14,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import paths
+from . import models, paths
 
 logger = logging.getLogger("replicant.gen_sd")
 
@@ -70,15 +70,16 @@ def generate_txt2img(checkpoint_path, prompt, negative, width, height, steps, cf
     """Generate image(s) with an SD-family checkpoint; returns saved file paths."""
     import random as _random
     pipe = get_pipeline()
-    pipe.load(checkpoint_path)
     if seed is None or int(seed) < 0:
         seed = _random.randint(0, 2**31 - 1)
-    images = pipe.generate_txt2img(
-        prompt=prompt, negative_prompt=negative or "",
-        width=int(width), height=int(height), steps=int(steps),
-        cfg_scale=float(cfg), seed=int(seed), sampler=sampler, scheduler=scheduler,
-        batch_size=int(batch_size), clip_skip=int(clip_skip), callback=callback,
-    )
+    with models.no_auto_download():  # never silently pull weights/configs
+        pipe.load(checkpoint_path)
+        images = pipe.generate_txt2img(
+            prompt=prompt, negative_prompt=negative or "",
+            width=int(width), height=int(height), steps=int(steps),
+            cfg_scale=float(cfg), seed=int(seed), sampler=sampler, scheduler=scheduler,
+            batch_size=int(batch_size), clip_skip=int(clip_skip), callback=callback,
+        )
     out = Path(out_dir) if out_dir else (paths.cache_dir() / "sd_gen")
     out.mkdir(parents=True, exist_ok=True)
     saved = []
@@ -138,19 +139,20 @@ def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
     cfg_obj.bodydouble_negative_prompt = negative or ""
     cfg_obj.bodydouble_seed = int(seed)
 
-    mask = segment_foreground(base_path, models_root)
-    try:
-        target_img = Image.open(base_path).convert("RGB")
-        control = [run_preprocessor("openpose", target_img,
-                                    **preprocessor_overrides_for("openpose", cfg_obj))]
-        facade = ImageGenerationPipeline(get_pipeline(), _ProjMgr(paths.cache_dir() / "body_swap"))
-        results = facade.run_body_double(
-            project_name="replicant", target_image=base_path, mask=mask,
-            source_person=source_person_path, control_images=control,
-            config=cfg_obj, num_images=1)
-        return results[0] if results else None
-    finally:
+    with models.no_auto_download():  # never silently pull BiRefNet/ControlNet/IP-Adapter
+        mask = segment_foreground(base_path, models_root)
         try:
-            os.unlink(mask)
-        except Exception:
-            pass
+            target_img = Image.open(base_path).convert("RGB")
+            control = [run_preprocessor("openpose", target_img,
+                                        **preprocessor_overrides_for("openpose", cfg_obj))]
+            facade = ImageGenerationPipeline(get_pipeline(), _ProjMgr(paths.cache_dir() / "body_swap"))
+            results = facade.run_body_double(
+                project_name="replicant", target_image=base_path, mask=mask,
+                source_person=source_person_path, control_images=control,
+                config=cfg_obj, num_images=1)
+            return results[0] if results else None
+        finally:
+            try:
+                os.unlink(mask)
+            except Exception:
+                pass

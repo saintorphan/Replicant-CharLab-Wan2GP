@@ -1,16 +1,23 @@
 """Registry of models this extension needs that Wan2GP does NOT bundle.
 
-The wizard's Models panel reads this registry to show per-model status and a
-Download button. Downloads stash into ``paths.models_dir()`` at each entry's
-``subpath``.
+The Prereqs Models panel reads this to show per-model status + a Download button.
+NOTHING downloads without an explicit button press: generation runs under
+``no_auto_download()`` (HF offline), so a missing model raises a clear error
+telling the user to fetch it here first — it never silently pulls.
 
-URLs marked ``url=None`` still need a confirmed source — the Download button is
-disabled for them until one is filled in (better than shipping a wrong link).
+Source kinds per entry:
+  - url:  single-file download → ``subpath`` under models_dir() (face models).
+  - repo: HuggingFace repo. ``repo_local_dir`` set → snapshot into that dir
+          (BiRefNet); else into the HF cache (ControlNet / IP-Adapter / annotator).
+  - url + extract: a .zip fetched and unpacked into ``extract_to`` (buffalo_l).
 """
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,56 +25,100 @@ from . import paths
 
 logger = logging.getLogger("replicant.models")
 
+_SD_CHECKOUT = os.environ.get(
+    "REPLICANT_SD_PATH", str(Path.home() / "Projects" / "SupremeDiffusionQt"))
+_BIREFNET_DIR = str(Path(_SD_CHECKOUT) / "models" / "birefnet")
+_BUFFALO_DIR = str(Path.home() / ".insightface" / "models" / "buffalo_l")
+
 
 @dataclass
 class ModelSpec:
     key: str
     name: str
-    subpath: str          # relative to models_dir()
     purpose: str
     required: bool
-    url: str | None = None
+    url: str | None = None       # single-file (or .zip with extract=True)
+    subpath: str = ""            # rel to models_dir() for url entries
+    repo: str = ""               # HF repo id
+    repo_local_dir: str = ""     # absolute local_dir for snapshot (else HF cache)
+    extract: bool = False        # url is a .zip → unpack into extract_to
+    extract_to: str = ""         # absolute dir for extracted contents
     note: str = ""
 
-    def local_path(self) -> Path:
-        return paths.models_dir() / self.subpath
+    @property
+    def downloadable(self) -> bool:
+        return bool(self.url or self.repo)
+
+    def display_path(self) -> str:
+        if self.repo and self.repo_local_dir:
+            return self.repo_local_dir
+        if self.repo:
+            return f"HF cache · {self.repo}"
+        if self.extract:
+            return self.extract_to
+        return str(paths.models_dir() / self.subpath)
 
     def is_present(self) -> bool:
-        return self.local_path().is_file()
+        if self.repo:
+            if self.repo_local_dir:
+                d = Path(self.repo_local_dir)
+                return d.is_dir() and any(d.iterdir())
+            try:  # cache check, no network
+                from huggingface_hub import snapshot_download
+                snapshot_download(self.repo, local_files_only=True)
+                return True
+            except Exception:
+                return False
+        if self.extract:
+            d = Path(self.extract_to)
+            return d.is_dir() and any(d.iterdir())
+        return (paths.models_dir() / self.subpath).is_file()
 
 
-# buffalo_l (InsightFace face detection) is intentionally NOT listed: insightface
-# auto-downloads it to ~/.insightface on first use.
 REGISTRY: list[ModelSpec] = [
-    ModelSpec(
-        key="inswapper_128", name="InSwapper 128 (face swap)",
-        subpath="face/inswapper_128.onnx",
-        purpose="Face swap onto the base image + base-face→poses identity lock.",
-        required=True,
-        url="https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/inswapper_128.onnx",
-    ),
-    ModelSpec(
-        key="gfpgan", name="GFPGAN v1.4 (face enhancer)",
-        subpath="face/GFPGANv1.4.onnx",
-        purpose="Optional face restoration after swaps.",
-        required=False,
-        url="https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/facerestore_models/GFPGANv1.4.onnx",
-    ),
-    ModelSpec(
-        key="codeformer", name="CodeFormer (face enhancer)",
-        subpath="face/codeformer.onnx",
-        purpose="Optional face restoration after swaps.",
-        required=False,
-        url="https://huggingface.co/facefusion/models-3.0.0/resolve/main/codeformer.onnx",
-    ),
-    ModelSpec(
-        key="face_yolov8s", name="ADetailer face_yolov8s",
-        subpath="face/face_yolov8s.pt",
-        purpose="Better face detection for restoration on tough angles.",
-        required=False,
-        url="https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8s.pt",
-    ),
+    # --- face swap / enhancers ---
+    ModelSpec("inswapper_128", "InSwapper 128 (face swap)",
+              "Face swap onto the base + base-face→poses identity lock.",
+              required=True, subpath="face/inswapper_128.onnx",
+              url="https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/inswapper_128.onnx"),
+    ModelSpec("gfpgan", "GFPGAN v1.4 (face enhancer)",
+              "Optional face restoration after swaps.", required=False,
+              subpath="face/GFPGANv1.4.onnx",
+              url="https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/facerestore_models/GFPGANv1.4.onnx"),
+    ModelSpec("codeformer", "CodeFormer (face enhancer)",
+              "Optional face restoration after swaps.", required=False,
+              subpath="face/codeformer.onnx",
+              url="https://huggingface.co/facefusion/models-3.0.0/resolve/main/codeformer.onnx"),
+    ModelSpec("face_yolov8s", "ADetailer face_yolov8s",
+              "Better face detection on tough angles.", required=False,
+              subpath="face/face_yolov8s.pt",
+              url="https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8s.pt"),
+    ModelSpec("buffalo_l", "InsightFace buffalo_l (face detect)",
+              "Face detection for swaps + dataset crops.", required=True,
+              url="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip",
+              extract=True, extract_to=_BUFFALO_DIR,
+              note="InsightFace would otherwise auto-fetch this on first use."),
+    # --- body swap (SD-family only) ---
+    ModelSpec("birefnet", "BiRefNet (body-swap segmentation)",
+              "Body swap: person segmentation mask.", required=False,
+              repo="ZhengPeng7/BiRefNet", repo_local_dir=_BIREFNET_DIR,
+              note="Loaded from a local dir, not HF cache."),
+    ModelSpec("openpose_annotator", "OpenPose annotator (body swap)",
+              "Body swap: extract a pose control image from the base.",
+              required=False, repo="lllyasviel/ControlNet"),
+    ModelSpec("controlnet_openpose_sdxl", "ControlNet OpenPose (SDXL)",
+              "Body swap: pose ControlNet for SDXL/Pony/Illustrious.",
+              required=False, repo="thibaud/controlnet-openpose-sdxl-1.0"),
+    ModelSpec("controlnet_openpose_sd15", "ControlNet OpenPose (SD1.5)",
+              "Body swap: pose ControlNet for SD1.5.", required=False,
+              repo="lllyasviel/control_v11p_sd15_openpose"),
+    ModelSpec("ip_adapter", "IP-Adapter (body swap identity)",
+              "Body swap: applies the source person's identity.", required=False,
+              repo="h94/IP-Adapter"),
 ]
+
+# Models the body-swap path needs present (or it errors, not auto-downloads).
+BODY_SWAP_KEYS = ["birefnet", "openpose_annotator", "ip_adapter"]
 
 
 def by_key(key: str) -> ModelSpec | None:
@@ -76,38 +127,92 @@ def by_key(key: str) -> ModelSpec | None:
 
 def status() -> list[dict]:
     return [{"key": m.key, "name": m.name, "present": m.is_present(),
-             "required": m.required, "downloadable": bool(m.url),
-             "path": str(m.local_path()), "purpose": m.purpose, "note": m.note}
+             "required": m.required, "downloadable": m.downloadable,
+             "path": m.display_path(), "purpose": m.purpose, "note": m.note}
             for m in REGISTRY]
 
 
+def missing(keys) -> list[str]:
+    """Names of registry models in ``keys`` that are not present."""
+    return [m.name for m in REGISTRY if m.key in keys and not m.is_present()]
+
+
+@contextlib.contextmanager
+def no_auto_download():
+    """Force HF/transformers offline so generation never silently pulls a model;
+    a missing one raises instead. Download buttons run OUTSIDE this guard."""
+    env = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE")
+    old = {k: os.environ.get(k) for k in env}
+    for k in env:
+        os.environ[k] = "1"
+    try:
+        yield
+    finally:
+        for k, v in old.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+
 def download(key: str, progress=None) -> str:
-    """Download a registry model into models_dir(). Returns a status string."""
     spec = by_key(key)
     if spec is None:
         return f"[Error] Unknown model '{key}'."
-    if not spec.url:
-        return f"[Error] No confirmed download URL for {spec.name} yet."
-    dst = spec.local_path()
-    if dst.is_file():
+    if spec.is_present():
         return f"[OK] {spec.name} already present."
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst.with_suffix(dst.suffix + ".part")
     try:
-        def _hook(blocks, bsize, total):
-            # Best-effort: a progress-reporting hiccup must never fail the download.
-            if progress is not None and total > 0:
-                try:
-                    progress(min(1.0, blocks * bsize / total), desc=f"Downloading {spec.name}")
-                except Exception:
-                    pass
-        urllib.request.urlretrieve(spec.url, tmp, _hook)
-        tmp.replace(dst)
-        return f"[Success] {spec.name} → {dst}"
+        if spec.repo:
+            return _download_repo(spec, progress)
+        if spec.extract:
+            return _download_zip(spec, progress)
+        return _download_file(spec, progress)
     except Exception as e:
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
         logger.warning("download failed for %s", key, exc_info=True)
         return f"[Error] Download failed for {spec.name}: {e}"
+
+
+def _download_repo(spec, progress) -> str:
+    from huggingface_hub import snapshot_download
+    if progress:
+        try:
+            progress(0.1, desc=f"Fetching {spec.name} ({spec.repo})…")
+        except Exception:
+            pass
+    kwargs = {}
+    if spec.repo_local_dir:
+        Path(spec.repo_local_dir).mkdir(parents=True, exist_ok=True)
+        kwargs["local_dir"] = spec.repo_local_dir
+    snapshot_download(spec.repo, **kwargs)
+    return f"[Success] {spec.name} → {spec.display_path()}"
+
+
+def _download_file(spec, progress) -> str:
+    dst = paths.models_dir() / spec.subpath
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_suffix(dst.suffix + ".part")
+
+    def _hook(blocks, bsize, total):
+        if progress is not None and total > 0:
+            try:
+                progress(min(1.0, blocks * bsize / total), desc=f"Downloading {spec.name}")
+            except Exception:
+                pass
+    urllib.request.urlretrieve(spec.url, tmp, _hook)
+    tmp.replace(dst)
+    return f"[Success] {spec.name} → {dst}"
+
+
+def _download_zip(spec, progress) -> str:
+    dst_dir = Path(spec.extract_to)
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    tmp = dst_dir.parent / (dst_dir.name + ".zip")
+
+    def _hook(blocks, bsize, total):
+        if progress is not None and total > 0:
+            try:
+                progress(min(1.0, blocks * bsize / total), desc=f"Downloading {spec.name}")
+            except Exception:
+                pass
+    urllib.request.urlretrieve(spec.url, tmp, _hook)
+    with zipfile.ZipFile(tmp) as z:
+        z.extractall(dst_dir)
+    tmp.unlink(missing_ok=True)
+    return f"[Success] {spec.name} → {dst_dir}"

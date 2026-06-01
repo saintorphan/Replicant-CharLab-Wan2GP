@@ -65,7 +65,7 @@ def build_prereqs():
                 with gr.Row():
                     st = gr.Markdown(_model_line(spec))
                     dl = gr.Button("Download", scale=0, min_width=110,
-                                   interactive=bool(spec.url))
+                                   interactive=spec.downloadable)
 
                 def _dl(key=spec.key, _spec=spec):
                     def _run(progress=gr.Progress()):
@@ -82,8 +82,8 @@ def build_prereqs():
 
 def _model_line(spec) -> str:
     present = "✅ present" if spec.is_present() else (
-        "⬇️ downloadable" if spec.url else "⚠️ source not set")
+        "⬇️ click Download" if spec.downloadable else "⚠️ source not set")
     req = "**required**" if spec.required else "optional"
     return (f"**{spec.name}** — {req} — {present}  \n"
-            f"<sub>{spec.purpose} `{spec.subpath}`"
+            f"<sub>{spec.purpose} `{spec.display_path()}`"
             + (f" — {spec.note}" if spec.note else "") + "</sub>")
