@@ -156,7 +156,7 @@ class _ProjMgr:
 def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
               cn_strength=0.7, ip_scale=0.8, denoise=0.75, cfg=7.0, steps=30,
               seed=-1, sampler="DPM++ 3M SDE", scheduler="Karras",
-              adetailer=True) -> str | None:
+              adetailer=True, progress=None) -> str | None:
     """Body double: segment the person in the base, extract an openpose control
     image, then inpaint a new body with the source person's identity (ControlNet
     openpose + IP-Adapter faceid_plus). SD-family checkpoints only.
@@ -167,8 +167,15 @@ def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
     import os
     from PIL import Image
     from . import deps
-    deps.ensure_body_swap()  # auto-install controlnet_aux / kornia / ultralytics if missing
+    deps.ensure_body_swap(progress)  # auto-install controlnet_aux/kornia/ultralytics if missing
     _import_pipeline_cls()  # ensure SD_CHECKOUT on sys.path
+
+    def _say(frac, msg):
+        if progress is not None:
+            try:
+                progress(frac, desc=msg)
+            except Exception:
+                pass
     from supremediffusion.core.image_pipeline import ImageGenerationPipeline
     from supremediffusion.config.project_config import ProjectConfig
     from supremediffusion.models.segmentation import (segment_foreground,
@@ -197,13 +204,16 @@ def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
 
     with models.no_auto_download():  # never silently pull BiRefNet/ControlNet/IP-Adapter
         release_sd()  # free the txt2img checkpoint so BiRefNet/body-double fit
+        _say(0.15, "Segmenting the person (BiRefNet)…")
         mask = segment_foreground(base_path, models_root)
         release_segmentation_model()  # free BiRefNet before the SD body-double loads
         _free_torch()
         try:
+            _say(0.4, "Extracting pose (OpenPose)…")
             target_img = Image.open(base_path).convert("RGB")
             control = [run_preprocessor("openpose", target_img,
                                         **preprocessor_overrides_for("openpose", cfg_obj))]
+            _say(0.6, "Generating body double (ControlNet + IP-Adapter)…")
             facade = ImageGenerationPipeline(get_pipeline(), _ProjMgr(paths.cache_dir() / "body_swap"))
             results = facade.run_body_double(
                 project_name="replicant", target_image=base_path, mask=mask,

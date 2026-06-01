@@ -169,14 +169,32 @@ def download(key: str, progress=None) -> str:
         return f"[Error] Download failed for {spec.name}: {e}"
 
 
+def _gr_tqdm(progress, label):
+    """A tqdm subclass that pumps its progress into a Gradio progress bar so HF
+    downloads don't look frozen."""
+    from tqdm.auto import tqdm as _tqdm
+
+    class _GrTqdm(_tqdm):
+        def update(self, n=1):
+            r = super().update(n)
+            try:
+                if progress is not None and self.total:
+                    progress(min(1.0, self.n / self.total),
+                             desc=f"Downloading {label} — {self.desc or ''}".strip(" —"))
+            except Exception:
+                pass
+            return r
+    return _GrTqdm
+
+
 def _download_repo(spec, progress) -> str:
     from huggingface_hub import snapshot_download
     if progress is not None:
         try:
-            progress(0.1, desc=f"Fetching {spec.name} ({spec.repo})…")
+            progress(0.0, desc=f"Fetching {spec.name} ({spec.repo})…")
         except Exception:
             pass
-    kwargs = {}
+    kwargs = {"tqdm_class": _gr_tqdm(progress, spec.name)}
     if spec.repo_local_dir:
         Path(spec.repo_local_dir).mkdir(parents=True, exist_ok=True)
         kwargs["local_dir"] = spec.repo_local_dir

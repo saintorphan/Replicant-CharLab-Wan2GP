@@ -314,7 +314,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                     ident, sel_base, body_src, pos, neg,
                     cn_strength=float(cn_strength), ip_scale=float(ip_scale),
                     denoise=float(denoise), cfg=float(body_cfg), steps=int(steps),
-                    seed=int(seed), sampler=sampler, scheduler=scheduler, adetailer=bool(adet))
+                    seed=int(seed), sampler=sampler, scheduler=scheduler,
+                    adetailer=bool(adet), progress=progress)
             finally:
                 self.release_gpu(state)
             if not out:
