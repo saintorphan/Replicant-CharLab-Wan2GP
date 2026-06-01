@@ -96,26 +96,28 @@ def build_swap(visible: bool):
         with gr.Row():
             with gr.Column(scale=1):
                 c["base_preview"] = gr.Image(label="Current base", type="filepath",
-                                             height=420, interactive=False)
-            with gr.Column(scale=2):
-                with gr.Tab("Face swap"):
-                    c["face_source"] = gr.Image(label="Face source", type="filepath", height=200)
-                    with gr.Row():
-                        c["face_enhancer"] = gr.Radio(["", "gfpgan", "codeformer"], value="",
-                                                      label="Enhancer")
-                        c["face_enhancer_strength"] = gr.Slider(0.0, 1.0, value=0.5, label="Strength")
-                    c["face_blend_ratio"] = gr.Slider(0.0, 1.0, value=0.5, label="Enhancer blend")
-                    c["run_face"] = gr.Button("Apply face swap to base", variant="primary")
-                with gr.Tab("Body swap"):
-                    c["body_source"] = gr.Image(label="Body source", type="filepath", height=200)
-                    with gr.Row():
-                        c["body_ip_scale"] = gr.Slider(0.0, 1.0, value=0.8, label="Identity strength")
-                        c["body_denoise"] = gr.Slider(0.0, 1.0, value=0.75, label="Denoise")
-                    with gr.Row():
-                        c["body_cfg"] = gr.Slider(1.0, 15.0, value=7.0, step=0.5, label="CFG")
-                        c["body_cn_strength"] = gr.Slider(0.0, 1.0, value=0.7, label="ControlNet (pose)")
-                    c["run_body"] = gr.Button("Apply body swap to base", variant="primary")
-                c["result"] = gr.Image(label="Result (becomes the base)", type="filepath", height=240)
+                                             height=300, interactive=False)
+                c["result"] = gr.Image(label="Result (becomes the base)",
+                                       type="filepath", height=300)
+            with gr.Column(scale=1):
+                gr.Markdown("**Face swap**")
+                c["face_source"] = gr.Image(label="Face source", type="filepath", height=200)
+                with gr.Row():
+                    c["face_enhancer"] = gr.Radio(["", "gfpgan", "codeformer"], value="",
+                                                  label="Enhancer")
+                    c["face_enhancer_strength"] = gr.Slider(0.0, 1.0, value=0.5, label="Strength")
+                c["face_blend_ratio"] = gr.Slider(0.0, 1.0, value=0.5, label="Enhancer blend")
+                c["run_face"] = gr.Button("Apply face swap to base", variant="primary")
+            with gr.Column(scale=1):
+                gr.Markdown("**Body swap** (SDXL/Pony/Illustrious)")
+                c["body_source"] = gr.Image(label="Body source", type="filepath", height=200)
+                with gr.Row():
+                    c["body_ip_scale"] = gr.Slider(0.0, 1.0, value=0.8, label="Identity")
+                    c["body_denoise"] = gr.Slider(0.0, 1.0, value=0.75, label="Denoise")
+                with gr.Row():
+                    c["body_cfg"] = gr.Slider(1.0, 15.0, value=7.0, step=0.5, label="CFG")
+                    c["body_cn_strength"] = gr.Slider(0.0, 1.0, value=0.7, label="ControlNet")
+                c["run_body"] = gr.Button("Apply body swap to base", variant="primary")
     return g, c
 
 
