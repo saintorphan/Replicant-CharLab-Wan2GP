@@ -72,8 +72,19 @@ def test_poses_and_negatives():
     print("✓ pose specs + distance-conditional negatives")
 
 
+def test_seed_prompt():
+    p = character.build_seed_prompt("a woman with red hair", "realism")
+    assert p.startswith("photo,"), p
+    assert "a woman with red hair" in p
+    assert "full body" in p
+    assert character.build_seed_prompt("x", "anime").startswith("anime,")
+    assert character.DEFAULT_NEGATIVE  # non-empty
+    print("✓ seed prompt builder + style medium")
+
+
 if __name__ == "__main__":
     test_save_load_roundtrip()
     test_dataset_compose()
     test_poses_and_negatives()
+    test_seed_prompt()
     print("\nALL PASSED")

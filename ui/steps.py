@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import gradio as gr
 
-from ..core import poses
+from ..core import paths, poses
 
 STEPS = [
     ("info", "① Info"),
@@ -52,7 +52,8 @@ def build_info(visible: bool):
         gr.Markdown("### ① Character Info")
         c = {}
         with gr.Row():
-            c["load_existing"] = gr.Dropdown(label="Load existing character", choices=[], scale=4)
+            c["load_existing"] = gr.Dropdown(label="Load existing character",
+                                             choices=paths.list_characters(), scale=4)
             c["load_btn"] = gr.Button("Load", scale=0, min_width=90)
             c["refresh_btn"] = gr.Button("⟳", scale=0, min_width=44)
         c["name"] = gr.Textbox(label="Character name", placeholder="e.g. Nova")
@@ -76,6 +77,7 @@ def build_prompt(visible: bool):
         gr.Markdown("<sub>Enhancement uses Wan2GP's abliterated Qwen3.5 enhancer.</sub>")
         c = {}
         with gr.Row():
+            c["seed_prompt"] = gr.Button("Build seed from description")
             c["enhance_pos"] = gr.Button("✨ Enhance positive", variant="primary")
             c["enhance_neg"] = gr.Button("✨ Enhance negative")
         c["positive_prompt"] = gr.Textbox(label="Positive prompt", lines=4,

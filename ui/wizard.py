@@ -89,6 +89,14 @@ def build_wizard():
     back_btn.click(lambda s, ref: _nav(s, ref, -1), inputs=[step, reference], outputs=nav_outputs)
     next_btn.click(lambda s, ref: _nav(s, ref, +1), inputs=[step, reference], outputs=nav_outputs)
 
+    # Reflect the skip on the rail: grey out Base Gen when a reference is set.
+    def _ref_changed(ref):
+        if ref:
+            return gr.update(value="③ Base (skipped)", interactive=False)
+        return gr.update(value=STEPS[BASE_IDX][1], interactive=True)
+
+    reference.change(_ref_changed, inputs=[reference], outputs=[rail[BASE_IDX]])
+
     _wire_load_save(comps)
 
     return {"step": step, "groups": groups, "rail": rail,
@@ -129,6 +137,15 @@ def _wire_load_save(comps):
                 cs.steps, cs.cfg_scale, cs.seed, cs.width, cs.height, cs.adetailer]
 
     info["load_btn"].click(_load, inputs=[info["load_existing"]], outputs=load_outputs)
+
+    # Seed the positive prompt from description + style; fill default negative if empty.
+    def _seed(desc, style, cur_neg):
+        neg = cur_neg if (cur_neg and cur_neg.strip()) else character.DEFAULT_NEGATIVE
+        return character.build_seed_prompt(desc, style), neg
+
+    prm["seed_prompt"].click(_seed,
+        inputs=[info["description"], info["style"], prm["negative_prompt"]],
+        outputs=[prm["positive_prompt"], prm["negative_prompt"]])
 
     save_inputs = [info["name"], info["description"], info["style"],
                    prm["positive_prompt"], prm["negative_prompt"],

@@ -34,6 +34,26 @@ RATIO_VIDEO = {"close": 0.60, "medium": 0.30, "full": 0.10}
 RATIO_HIGHRES = {"close": 0.40, "medium": 0.30, "full": 0.30}
 
 
+# Style → prompt "medium" word, used to seed the positive prompt before the
+# Qwen3.5 enhancer expands it.
+STYLE_MEDIUM = {"realism": "photo", "anime": "anime", "cartoon": "cartoon illustration"}
+
+DEFAULT_NEGATIVE = (
+    "lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, "
+    "cropped, worst quality, low quality, jpeg artifacts, blurry, deformed, "
+    "disfigured, watermark, text, signature"
+)
+
+
+def build_seed_prompt(description: str, style: str = "realism") -> str:
+    """Seed a positive prompt from the description + framing + style medium. This
+    is the text the Qwen3.5 enhancer then expands into model-specific grammar."""
+    medium = STYLE_MEDIUM.get(style, "photo")
+    desc = (description or "").strip().rstrip(",")
+    parts = [medium, BASE_FRAMING, desc]
+    return ", ".join(p for p in parts if p)
+
+
 def caption_for(trigger: str, distance: str, angle: str, desc: str) -> str:
     """Trigger-first caption with distance + angle tags, then the description."""
     parts = [trigger, DISTANCE_TAG.get(distance, "full body shot"),

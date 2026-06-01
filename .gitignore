@@ -6,12 +6,14 @@ __pycache__/
 venv/
 env/
 
-# Generated character data / datasets / models
-library/characters/
-datasets/
+# Generated character data / datasets / downloaded models + local config
+character_lab/
+.replicant_charlab.json
 *.safetensors
 *.ckpt
 *.gguf
+*.onnx
+*.pth
 
 # OS / editor
 .DS_Store

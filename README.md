@@ -16,9 +16,49 @@ Guides you through creating a reusable character — from name + description to 
 6. **Save** — write the character + build LoRA datasets
 7. **Train** — train a character LoRA from the built datasets
 
+## Install
+
+In Wan2GP, open the **Plugins** manager and "install from GitHub URL":
+
+```
+https://github.com/saintorphan/Replicant-CharLab-Wan2GP
+```
+
+Then enable **Replicant Character Lab** in the plugin list and restart WanGP. The
+installer clones the repo into `plugins/`, installs `requirements.txt`
+(InsightFace + onnxruntime — required for face swap / dataset crops), and the
+plugin creates its data directories on first run.
+
+> Not yet an official Wan2GP plugin — install via the GitHub URL above.
+
+### Data layout
+
+Created under `<wan2gp_root>/character_lab/` (all three roots are configurable
+and persisted from the wizard's **Prerequisites → Directories** panel):
+
+```
+character_lab/
+├── characters/<Name>/   character.json, base.png, poses/
+├── datasets/<Name>/     video512/ highres/ full/ face/  (NNN.png + NNN.txt)
+└── models/face/         downloaded swap/enhancer models
+```
+
+### Models (downloaded from the Prerequisites → Models panel)
+
+| Model | Required | Source |
+|-------|----------|--------|
+| `inswapper_128.onnx` | yes | facefusion-assets |
+| `GFPGANv1.4.onnx` | optional | Gourieff/ReActor |
+| `codeformer.onnx` | optional | facefusion/models-3.0.0 |
+| `face_yolov8s.pt` | optional | Bingsu/adetailer |
+
+InsightFace's `buffalo_l` is fetched automatically on first use.
+
 ## Status
 
-🚧 Early development — porting the PySide6 wizard to a Gradio `WAN2GPPlugin`.
+🚧 Early development. Data layer + wizard UI complete and tested; GPU-bound
+generation (base gen, swaps, pose gen, prompt enhance, training) wires to
+Wan2GP's native pipelines next.
 
 ## Design notes
 
