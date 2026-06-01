@@ -197,8 +197,11 @@ def _get_ip_inpaint(checkpoint_path):
     with models.no_auto_download():
         pipe = StableDiffusionXLInpaintPipeline.from_single_file(
             checkpoint_path, torch_dtype=torch.float16)
+        # The *_vit-h weights expect the ViT-H image encoder (1280-dim) at
+        # models/image_encoder — NOT the bigG encoder (1664) in sdxl_models/.
         pipe.load_ip_adapter("h94/IP-Adapter", subfolder="sdxl_models",
-                             weight_name="ip-adapter-plus_sdxl_vit-h.safetensors")
+                             weight_name="ip-adapter-plus_sdxl_vit-h.safetensors",
+                             image_encoder_folder="models/image_encoder")
     try:
         pipe.to("cuda")
     except Exception:
