@@ -45,11 +45,13 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
     # Header: taglines (left) · banner (center) · Clear Wizard (right) -------
     with gr.Row(elem_id="replicant-header"):
         with gr.Column(scale=3):
-            gr.HTML('<div class="replicant-tagline">Create character LoRAs from a '
-                    'single image!</div>'
-                    '<div class="replicant-tagline">Actually, yes— we DO support '
-                    'SDXL!</div>')
-        with gr.Column(scale=4):
+            gr.HTML('<div class="replicant-taglines">'
+                    '<div class="replicant-tagline">&ldquo;Create character LoRAs '
+                    'from a single image!&rdquo;</div>'
+                    '<div class="replicant-tagline">&ldquo;Actually, yes&mdash; we DO '
+                    'support SDXL!&rdquo;</div>'
+                    '</div>')
+        with gr.Column(scale=6):
             gr.HTML(_banner_html())
         with gr.Column(scale=3, min_width=200):
             header_clear_btn = gr.Button("🗑 Clear Wizard", variant="stop")
