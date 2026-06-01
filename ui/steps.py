@@ -122,9 +122,6 @@ def build_base(visible: bool, init=None):
 def build_swap(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ③ Face / Body Swap")
-        gr.Markdown("<sub>Run a swap to **preview** it, then **Accept** (commit to base) or "
-                    "**Retry**. The other swap and step navigation lock until you Accept, so "
-                    "a bad swap can't corrupt the base.</sub>")
         c = {}
         with gr.Row():
             with gr.Column(scale=1):
