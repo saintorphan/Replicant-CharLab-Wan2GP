@@ -53,11 +53,15 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
                     '</div>')
         with gr.Column(scale=6):
             gr.HTML(_banner_html())
-        with gr.Column(scale=3, min_width=200):
-            header_clear_btn = gr.Button("🗑 Clear Wizard", variant="stop")
+        with gr.Column(scale=3, min_width=200, elem_id="replicant-clearcol"):
+            header_clear_btn = gr.Button("🗑 Clear Wizard", variant="stop",
+                                         scale=0, min_width=150)
             header_clear_files = gr.Checkbox(value=False,
                 label="Delete all unsaved generations (candidates / base / reference / "
                       "swaps / poses)")
+            gr.HTML('<div class="replicant-ghlink"><a href="https://github.com/'
+                    'saintorphan/Replicant-CharLab-Wan2GP" target="_blank" '
+                    'rel="noopener">⧉ GitHub repo</a></div>')
 
     # Prerequisites (directories + models) ----------------------------------
     prereqs = build_prereqs()

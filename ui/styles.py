@@ -15,6 +15,12 @@ button.replicant-tabbtn {
 /* Pull the lab content flush to the tab bar — no gap above the logo. */
 #replicant-root { padding-top: 0 !important; margin-top: 0 !important; gap: 0; }
 #replicant-header { align-items: center; margin: 0 0 14px 0; }
+/* Clear Wizard column: centered, narrower button, nudged up; GitHub link below. */
+#replicant-clearcol { align-items: center; transform: translateY(-8px); }
+#replicant-clearcol button { margin: 0 auto; }
+.replicant-ghlink { text-align: center; margin-top: 6px; font-size: 0.9em; }
+.replicant-ghlink a { color: #a64dff; text-decoration: none; }
+.replicant-ghlink a:hover { text-decoration: underline; }
 #replicant-header #replicant-banner { margin: 0; text-align: center; }
 /* Scaled to the column, preserving the 1580x392 (~4.03:1) ratio, centered. */
 #replicant-header #replicant-banner img { width: 100%; max-width: 100%; height: auto;
