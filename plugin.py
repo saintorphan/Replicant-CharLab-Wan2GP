@@ -463,7 +463,7 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         _FILL = {"fill": 0, "original": 1, "latent noise": 2, "latent nothing": 3}
 
-        def _run_inpaint(state, model, ev, ip_prompt, ip_neg, ip_denoise,
+        def _run_inpaint(state, model, ev, ip_prompt, ip_neg, ip_denoise, count,
                          mask_blur, fill, full_res, padding, gallery,
                          steps, cfg, seed, sampler, scheduler, clip_skip,
                          progress=gr.Progress()):
@@ -483,29 +483,29 @@ class ReplicantCharLab(WAN2GPPlugin):
                 import tempfile
                 tp = os.path.join(tempfile.mkdtemp(), "inp_src.png")
                 Image.fromarray(bg[..., :3] if bg.ndim == 3 else bg).save(tp)
-                out = gen_sd.inpaint(ident, tp, mask, ip_prompt, ip_neg,
-                                     denoise=float(ip_denoise), steps=int(steps),
-                                     cfg=float(cfg), seed=int(seed), sampler=sampler,
-                                     scheduler=scheduler, clip_skip=int(clip_skip),
-                                     mask_blur=int(mask_blur),
-                                     inpainting_fill=_FILL.get(fill, 1),
-                                     full_res=bool(full_res), padding=int(padding),
-                                     progress=progress)
+                outs = gen_sd.inpaint(ident, tp, mask, ip_prompt, ip_neg,
+                                      denoise=float(ip_denoise), steps=int(steps),
+                                      cfg=float(cfg), seed=int(seed), sampler=sampler,
+                                      scheduler=scheduler, clip_skip=int(clip_skip),
+                                      mask_blur=int(mask_blur),
+                                      inpainting_fill=_FILL.get(fill, 1),
+                                      full_res=bool(full_res), padding=int(padding),
+                                      batch_size=int(count), progress=progress)
             finally:
                 self.release_gpu(state)
-            if not out:
+            if not outs:
                 return gr.update()
             history = [g[0] if isinstance(g, (list, tuple)) else g
                        for g in (gallery or [])]
-            return history + [out]  # newest appended to the horizontal strip
+            return history + list(outs)  # newest appended to the horizontal strip
 
         inp["run_inpaint"].click(
             _run_inpaint,
             inputs=[self.state, s["model"], inp["editor"], inp["inpaint_prompt"],
-                    inp["inpaint_neg"], inp["inpaint_denoise"], inp["inpaint_mask_blur"],
-                    inp["inpaint_fill"], inp["inpaint_full_res"], inp["inpaint_padding"],
-                    inp["inpaint_gallery"], s["steps"], s["cfg_scale"], s["seed"],
-                    s["sampler"], s["scheduler"], s["clip_skip"]],
+                    inp["inpaint_neg"], inp["inpaint_denoise"], inp["inpaint_count"],
+                    inp["inpaint_mask_blur"], inp["inpaint_fill"], inp["inpaint_full_res"],
+                    inp["inpaint_padding"], inp["inpaint_gallery"], s["steps"],
+                    s["cfg_scale"], s["seed"], s["sampler"], s["scheduler"], s["clip_skip"]],
             outputs=[inp["inpaint_gallery"]])
 
         def _pick_inpaint(evt: gr.SelectData):

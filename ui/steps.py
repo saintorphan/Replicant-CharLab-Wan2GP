@@ -219,6 +219,8 @@ def build_inpaint(visible: bool, init=None):
                     c["inpaint_neg"] = gr.Textbox(label="Negative prompt", lines=2)
                     c["inpaint_denoise"] = gr.Slider(0.2, 1.0, value=0.75, step=0.05,
                                                      label="Denoise")
+                    c["inpaint_count"] = gr.Slider(1, 8, value=1, step=1,
+                                                   label="Results")
                     c["inpaint_mask_blur"] = gr.Slider(0, 64, value=4, step=1,
                                                        label="Mask blur (px)")
                     c["inpaint_fill"] = gr.Radio(

@@ -145,8 +145,9 @@ def generate_img2img(checkpoint_path, image_path, prompt, negative, width, heigh
 def inpaint(checkpoint_path, image_path, mask_image, prompt, negative, denoise=0.75,
             steps=30, cfg=6.0, seed=-1, sampler="DPM++ 2M", scheduler="Karras",
             clip_skip=1, mask_blur=4, inpainting_fill=1, full_res=False, padding=32,
-            out_dir=None, progress=None) -> str | None:
-    """Prompt-driven masked inpaint for manual touch-ups (no IP-Adapter).
+            batch_size=1, out_dir=None, progress=None) -> list[str]:
+    """Prompt-driven masked inpaint for manual touch-ups (no IP-Adapter). Returns the
+    saved image paths (``batch_size`` of them).
 
     Inpaint-specific params mirror SupremeDiffusion's generate_inpaint: ``mask_blur``
     (px), ``inpainting_fill`` (0 fill / 1 original / 2 latent-noise / 3 latent-nothing),
@@ -166,17 +167,18 @@ def inpaint(checkpoint_path, image_path, mask_image, prompt, negative, denoise=0
             cfg_scale=float(cfg), seed=int(seed), sampler=sampler, scheduler=scheduler,
             clip_skip=int(clip_skip), mask_blur=int(mask_blur),
             inpainting_fill=int(inpainting_fill), full_res=bool(full_res),
-            padding=int(padding))
+            padding=int(padding), batch_size=int(batch_size))
     out = Path(out_dir) if out_dir else (paths.cache_dir() / "inpaint")
     out.mkdir(parents=True, exist_ok=True)
+    saved = []
     for i, im in enumerate(images or []):
         f = out / f"inp_{int(seed)}_{i}.png"
         try:
             im.save(f)
-            return str(f)
+            saved.append(str(f))
         except Exception:
             logger.warning("failed saving inpaint", exc_info=True)
-    return None
+    return saved
 
 
 # ---- Shared IP-Adapter masked-inpaint identity transfer -------------------
