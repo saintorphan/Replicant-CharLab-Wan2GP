@@ -245,34 +245,90 @@ class ReplicantCharLab(WAN2GPPlugin):
             outputs=[base["candidates"], base["selected_base"]])
 
         # -- step 4: face swap onto the base (optional) --
-        def _face(state, target_base, face_src, enhancer, strength, blend):
+        # --- Swap review flow: run -> preview, then Retry or Accept (commit to base).
+        # While a result is pending, the other swap + step navigation lock so a bad
+        # swap can't corrupt the base. Accept commits + unlocks. ---
+        rail = ui["rail"]
+        back_btn, next_btn = ui["nav"]
+        LOCK = (list(rail) + [back_btn, next_btn,
+                swap["run_face"], swap["retry_face"], swap["accept_face"],
+                swap["run_body"], swap["retry_body"], swap["accept_body"]])
+
+        def _lockset(which):  # which: None (idle) / "face" / "body"
+            idle = which is None
+            ups = [gr.update(interactive=idle) for _ in rail]
+            ups += [gr.update(interactive=idle), gr.update(interactive=idle)]  # back, next
+            ups += [gr.update(interactive=idle),
+                    gr.update(interactive=(which == "face")),
+                    gr.update(interactive=(which == "face"))]
+            ups += [gr.update(interactive=idle),
+                    gr.update(interactive=(which == "body")),
+                    gr.update(interactive=(which == "body"))]
+            return ups
+
+        def _run_face(state, target_base, face_src, enhancer, strength, blend):
             if not target_base:
                 raise gr.Error("Generate/select a base image first (step 3).")
             if not face_src:
                 raise gr.Error("Provide a face source image.")
             self._require(["inswapper_128", "buffalo_l"], "Face swap")
-            gen_sd.release_sd()  # face swap doesn't need the SD checkpoint — free it
+            gen_sd.release_sd()
             if not self.acquire_gpu(state):
-                return gr.update()
+                raise gr.Error("GPU is busy.")
             try:
+                import time
                 img = self._face_pipe().swap(
                     source_path=face_src, target_path=target_base,
                     enhancer=enhancer or None, blend_ratio=float(blend),
                     enhancer_strength=float(strength))
                 out = paths.cache_dir() / "swap"; out.mkdir(parents=True, exist_ok=True)
-                p = out / "face_swapped_base.png"; img.save(p)
-                return str(p)
+                p = out / f"face_{int(time.time())}.png"; img.save(p)
             finally:
                 self.release_gpu(state)
-        swap["run_face"].click(
-            _face,
-            inputs=[self.state, base["selected_base"], swap["face_source"],
-                    swap["face_enhancer"], swap["face_enhancer_strength"],
-                    swap["face_blend_ratio"]],
-            outputs=[swap["result"]])
-        # the swap result becomes the canonical base
-        swap["result"].change(lambda p: p or gr.update(), inputs=[swap["result"]],
-                              outputs=[base["selected_base"]])
+            return [str(p)] + _lockset("face")
+
+        face_in = [self.state, base["selected_base"], swap["face_source"],
+                   swap["face_enhancer"], swap["face_enhancer_strength"], swap["face_blend_ratio"]]
+        swap["run_face"].click(_run_face, inputs=face_in, outputs=[swap["result"]] + LOCK)
+        swap["retry_face"].click(_run_face, inputs=face_in, outputs=[swap["result"]] + LOCK)
+        swap["accept_face"].click(lambda res: [res or gr.update()] + _lockset(None),
+                                  inputs=[swap["result"]], outputs=[base["selected_base"]] + LOCK)
+
+        def _run_body(state, model, sel_base, body_src, ip_scale, denoise, body_cfg,
+                      cn_strength, steps, seed, sampler, scheduler, pos, neg, adet,
+                      progress=gr.Progress()):
+            if not sel_base:
+                raise gr.Error("Generate/select a base image first (step 3).")
+            if not body_src:
+                raise gr.Error("Provide a body source image.")
+            backend, ident = discovery.parse_model_value(model)
+            if backend != "sd":
+                raise gr.Error("Body swap needs an SDXL/Pony/Illustrious model selected.")
+            self._require(models.BODY_SWAP_KEYS + ["controlnet_openpose_sdxl"], "Body swap")
+            self._release_faceswap()
+            if not self.acquire_gpu(state):
+                raise gr.Error("GPU is busy.")
+            try:
+                progress(0.1, desc="Segmenting + posing + body double…")
+                out = gen_sd.body_swap(
+                    ident, sel_base, body_src, pos, neg,
+                    cn_strength=float(cn_strength), ip_scale=float(ip_scale),
+                    denoise=float(denoise), cfg=float(body_cfg), steps=int(steps),
+                    seed=int(seed), sampler=sampler, scheduler=scheduler, adetailer=bool(adet))
+            finally:
+                self.release_gpu(state)
+            if not out:
+                raise gr.Error("Body swap produced no image.")
+            return [out] + _lockset("body")
+
+        body_in = [self.state, s["model"], base["selected_base"], swap["body_source"],
+                   swap["body_ip_scale"], swap["body_denoise"], swap["body_cfg"],
+                   swap["body_cn_strength"], s["steps"], s["seed"], s["sampler"],
+                   s["scheduler"], base["pos"], base["neg"], swap["adetailer"]]
+        swap["run_body"].click(_run_body, inputs=body_in, outputs=[swap["result"]] + LOCK)
+        swap["retry_body"].click(_run_body, inputs=body_in, outputs=[swap["result"]] + LOCK)
+        swap["accept_body"].click(lambda res: [res or gr.update()] + _lockset(None),
+                                  inputs=[swap["result"]], outputs=[base["selected_base"]] + LOCK)
 
         # A/B compare: base vs swapped, side by side, each full-screen + zoomable.
         def _ab(base_img, result_img):
@@ -284,41 +340,6 @@ class ReplicantCharLab(WAN2GPPlugin):
         swap["ab_close"].click(
             lambda: (gr.update(visible=False), gr.update(visible=False)),
             outputs=[swap["ab_row"], swap["ab_close_row"]])
-        def _body(state, model, sel_base, body_src, ip_scale, denoise, body_cfg,
-                  cn_strength, steps, seed, sampler, scheduler, pos, neg, adet,
-                  progress=gr.Progress()):
-            if not sel_base:
-                raise gr.Error("Generate/select a base image first (step 3).")
-            if not body_src:
-                raise gr.Error("Provide a body source image.")
-            backend, ident = discovery.parse_model_value(model)
-            if backend != "sd":
-                raise gr.Error("Body swap needs an SDXL/Pony/Illustrious model selected "
-                               "(ControlNet + IP-Adapter are SD-only).")
-            self._require(models.BODY_SWAP_KEYS + ["controlnet_openpose_sdxl"], "Body swap")
-            self._release_faceswap()  # free InsightFace before the body-double stack
-            if not self.acquire_gpu(state):
-                return gr.update()
-            try:
-                progress(0.1, desc="Segmenting + posing + body double…")
-                out = gen_sd.body_swap(
-                    ident, sel_base, body_src, pos, neg,
-                    cn_strength=float(cn_strength), ip_scale=float(ip_scale),
-                    denoise=float(denoise), cfg=float(body_cfg), steps=int(steps),
-                    seed=int(seed), sampler=sampler, scheduler=scheduler,
-                    adetailer=bool(adet))
-                return out or gr.update()
-            finally:
-                self.release_gpu(state)
-
-        swap["run_body"].click(
-            _body,
-            inputs=[self.state, s["model"], base["selected_base"], swap["body_source"],
-                    swap["body_ip_scale"], swap["body_denoise"], swap["body_cfg"],
-                    swap["body_cn_strength"], s["steps"], s["seed"], s["sampler"],
-                    s["scheduler"], prm["positive_prompt"], prm["negative_prompt"],
-                    swap["adetailer"]],
-            outputs=[swap["result"]])
 
         # -- step 5: pose variants (+ mandatory base-face swap) --
         def _gen_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,

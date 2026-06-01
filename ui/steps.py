@@ -127,8 +127,9 @@ def build_base(visible: bool, init=None):
 def build_swap(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ④ Face / Body Swap")
-        gr.Markdown("<sub>Optional — lock identity/body on the **base image**. Pose "
-                    "generation always grabs the face from the finalized base.</sub>")
+        gr.Markdown("<sub>Run a swap to **preview** it, then **Accept** (commit to base) or "
+                    "**Retry**. The other swap and step navigation lock until you Accept, so "
+                    "a bad swap can't corrupt the base.</sub>")
         c = {}
         with gr.Row():
             c["ab_btn"] = gr.Button("🔍 A/B compare (full screen + zoom)")
@@ -137,8 +138,9 @@ def build_swap(visible: bool, init=None):
                 c["base_preview"] = gr.Image(label="Current base", type="filepath",
                                              height=560, interactive=False,
                                              show_fullscreen_button=True)
-                c["result"] = gr.Image(label="Result (becomes the base)", type="filepath",
-                                       height=560, show_fullscreen_button=True)
+                c["result"] = gr.Image(label="Swap result (preview — Accept to make it the base)",
+                                       type="filepath", height=560, interactive=False,
+                                       show_fullscreen_button=True)
             with gr.Column(scale=1):
                 gr.Markdown("### Face swap")
                 c["face_source"] = gr.Image(label="Face source", type="filepath", height=320,
@@ -149,7 +151,10 @@ def build_swap(visible: bool, init=None):
                                                   label="Enhancer")
                     c["face_enhancer_strength"] = gr.Slider(0.0, 1.0, value=0.5, label="Strength")
                 c["face_blend_ratio"] = gr.Slider(0.0, 1.0, value=0.5, label="Enhancer blend")
-                c["run_face"] = gr.Button("Apply face swap to base", variant="primary")
+                with gr.Row():
+                    c["run_face"] = gr.Button("Run face swap", variant="primary")
+                    c["retry_face"] = gr.Button("↻ Retry", interactive=False)
+                    c["accept_face"] = gr.Button("✓ Accept → base", variant="primary", interactive=False)
                 gr.Markdown("### Body swap  <sub>(SDXL/Pony/Illustrious)</sub>")
                 c["body_source"] = gr.Image(label="Body source", type="filepath", height=320,
                                             show_fullscreen_button=True,
@@ -161,7 +166,10 @@ def build_swap(visible: bool, init=None):
                     c["body_cfg"] = gr.Slider(1.0, 15.0, value=7.0, step=0.5, label="CFG")
                     c["body_cn_strength"] = gr.Slider(0.0, 1.0, value=0.7, label="ControlNet")
                 c["adetailer"] = gr.Checkbox(value=True, label="ADetailer (face restore on body-swap result)")
-                c["run_body"] = gr.Button("Apply body swap to base", variant="primary")
+                with gr.Row():
+                    c["run_body"] = gr.Button("Run body swap", variant="primary")
+                    c["retry_body"] = gr.Button("↻ Retry", interactive=False)
+                    c["accept_body"] = gr.Button("✓ Accept → base", variant="primary", interactive=False)
         # A/B comparison overlay — base vs swapped, side by side, each zoomable full screen.
         with gr.Row(visible=False) as ab_row:
             with gr.Column():
