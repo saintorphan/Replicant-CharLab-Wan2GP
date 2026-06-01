@@ -235,6 +235,7 @@ def build_inpaint(visible: bool, init=None):
                     c["run_inpaint"] = gr.Button("Run inpaint", variant="primary")
                     with gr.Row():
                         c["use_inpaint"] = gr.Button("✓ Use as Base", variant="primary")
+                        c["reuse_inpaint"] = gr.Button("↻ Send to Inpaint")
                         c["send_to_cohesion"] = gr.Button("→ Send to Cohesion")
                         c["revert_inpaint"] = gr.Button("↩ Revert")
         c["inpaint_grp"] = inpaint_grp
@@ -265,6 +266,7 @@ def build_inpaint(visible: bool, init=None):
                         "to select, then Use as Base", columns=2, rows=2, height=560,
                         object_fit="contain", show_fullscreen_button=True)
                     c["use_cohesion"] = gr.Button("✓ Use selected as Base", variant="primary")
+                    c["reuse_cohesion"] = gr.Button("↻ Send to Cohesion")
                     c["send_to_inpaint"] = gr.Button("→ Send to Inpaint")
             c["cohesion_picked"] = gr.State(None)
         c["cohesion_grp"] = cohesion_grp

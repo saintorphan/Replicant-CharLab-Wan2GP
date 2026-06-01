@@ -546,6 +546,16 @@ class ReplicantCharLab(WAN2GPPlugin):
             outputs=[inp["editor"], inp["touchup_mode"],
                      inp["inpaint_grp"], inp["cohesion_grp"]])
 
+        # Send a selected result back into the SAME subtab as the editable image.
+        def _need(p):
+            if not p:
+                raise gr.Error("Select a result first.")
+            return p
+        inp["reuse_inpaint"].click(_need, inputs=[inp["inpaint_picked"]],
+                                   outputs=[inp["editor"]])
+        inp["reuse_cohesion"].click(_need, inputs=[inp["cohesion_picked"]],
+                                    outputs=[inp["cohesion_src"]])
+
         # -- Cohesion mode: gentle img2img normalize using the character prompt --
         def _normalize(state, model, src, pos, neg, focus, cfg, steps,
                        progress=gr.Progress()):
