@@ -145,7 +145,7 @@ def generate_img2img(checkpoint_path, image_path, prompt, negative, width, heigh
 def inpaint(checkpoint_path, image_path, mask_image, prompt, negative, denoise=0.75,
             steps=30, cfg=6.0, seed=-1, sampler="DPM++ 2M", scheduler="Karras",
             clip_skip=1, mask_blur=4, inpainting_fill=1, full_res=False, padding=32,
-            batch_size=1, out_dir=None, progress=None) -> list[str]:
+            batch_size=1, loras=None, out_dir=None, progress=None) -> list[str]:
     """Prompt-driven masked inpaint for manual touch-ups (no IP-Adapter). Returns the
     saved image paths (``batch_size`` of them).
 
@@ -161,13 +161,30 @@ def inpaint(checkpoint_path, image_path, mask_image, prompt, negative, denoise=0
     w, h = img.size
     with models.no_auto_download():
         pipe.load(checkpoint_path)
-        images = pipe.generate_inpaint(
-            image=img, mask=mask_image, prompt=prompt or "", negative_prompt=negative or "",
-            denoising_strength=float(denoise), width=int(w), height=int(h), steps=int(steps),
-            cfg_scale=float(cfg), seed=int(seed), sampler=sampler, scheduler=scheduler,
-            clip_skip=int(clip_skip), mask_blur=int(mask_blur),
-            inpainting_fill=int(inpainting_fill), full_res=bool(full_res),
-            padding=int(padding), batch_size=int(batch_size))
+        # LoRAs (independent to the Touch Up tab): generate_inpaint takes no loras arg,
+        # so apply them to the inpaint pipe directly, then remove afterward.
+        ip = None
+        if loras:
+            try:
+                ip = pipe._get_inpaint_pipe()
+                pipe._apply_loras_to_pipe(ip, loras)
+            except Exception:
+                logger.warning("failed applying inpaint LoRAs", exc_info=True)
+                ip = None
+        try:
+            images = pipe.generate_inpaint(
+                image=img, mask=mask_image, prompt=prompt or "", negative_prompt=negative or "",
+                denoising_strength=float(denoise), width=int(w), height=int(h),
+                steps=int(steps), cfg_scale=float(cfg), seed=int(seed), sampler=sampler,
+                scheduler=scheduler, clip_skip=int(clip_skip), mask_blur=int(mask_blur),
+                inpainting_fill=int(inpainting_fill), full_res=bool(full_res),
+                padding=int(padding), batch_size=int(batch_size))
+        finally:
+            if ip is not None:
+                try:
+                    pipe._remove_loras_from_pipe(ip)
+                except Exception:
+                    logger.warning("failed removing inpaint LoRAs", exc_info=True)
     out = Path(out_dir) if out_dir else (paths.cache_dir() / "inpaint")
     out.mkdir(parents=True, exist_ok=True)
     saved = []

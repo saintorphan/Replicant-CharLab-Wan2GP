@@ -51,8 +51,9 @@ button.replicant-tabbtn {
 .replicant-acc > .label-wrap span,
 .replicant-acc > button.label-wrap span { font-size: 2em !important; font-weight: 700 !important; }
 
-/* Touch Up: results strip scrolls sideways. (Options column grows with its content
-   so Run + the Use/Send/Revert row are always visible.) */
+/* Touch Up: options column scrolls (Run + actions are in their own row below it);
+   results strip scrolls sideways. */
+#replicant-inpaint-opts { max-height: 720px; overflow-y: auto; }
 #replicant-inpaint-out .grid-wrap { overflow-x: auto !important; }
 #replicant-inpaint-out .grid-container {
     display: flex !important; flex-wrap: nowrap !important; }

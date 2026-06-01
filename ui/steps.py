@@ -191,7 +191,7 @@ def build_swap(visible: bool, init=None):
     return g, c
 
 
-def build_inpaint(visible: bool, init=None):
+def build_inpaint(visible: bool, init=None, lora_choices=None):
     base_img = _init_img(init, "base.selected_base")
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ④ Touch Up")
@@ -227,6 +227,11 @@ def build_inpaint(visible: bool, init=None):
                         label="Full-res padding (px)")
                     gr.Markdown("<sub>Adjust additional settings in **Generation Settings** "
                                 "above. Size is locked to portrait.</sub>")
+                    with gr.Accordion("LoRAs", open=False):
+                        c["inpaint_loras"] = gr.Dropdown(label="LoRAs", multiselect=True,
+                                                         choices=lora_choices or [])
+                        c["inpaint_lora_mult"] = gr.Textbox(label="Multipliers",
+                                                            placeholder="0.8, 1.0")
             # Actions row — between the canvas/settings and the results strip.
             with gr.Row():
                 c["run_inpaint"] = gr.Button("Run inpaint", variant="primary")
@@ -246,9 +251,11 @@ def build_inpaint(visible: bool, init=None):
             with gr.Row():
                 with gr.Column(scale=1):
                     c["cohesion_src"] = gr.Image(label="Source (current base)",
-                                                 type="filepath", height=460,
+                                                 type="filepath", height=420,
                                                  interactive=False,
                                                  show_fullscreen_button=True, value=base_img)
+                    c["cohesion_prompt"] = gr.Textbox(label="Positive prompt", lines=2)
+                    c["cohesion_neg"] = gr.Textbox(label="Negative prompt", lines=1)
                     c["cohesion_cfg"] = gr.Slider(0.15, 0.30, value=0.22, step=0.01,
                                                   label="CFG (override)")
                     c["cohesion_steps"] = gr.Slider(5, 15, value=10, step=1,

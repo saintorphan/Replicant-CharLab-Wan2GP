@@ -110,7 +110,10 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
     # Step panels -----------------------------------------------------------
     groups, comps = [], {}
     for i, builder in enumerate(BUILDERS):
-        g, c = builder(visible=(i == 0), init=init)
+        if STEPS[i][0] == "inpaint":
+            g, c = builder(visible=(i == 0), init=init, lora_choices=lora_choices)
+        else:
+            g, c = builder(visible=(i == 0), init=init)
         groups.append(g)
         comps[STEPS[i][0]] = c
     # Load / Save / Clear are header session actions; expose them where the wiring looks.

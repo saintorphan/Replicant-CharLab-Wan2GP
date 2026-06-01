@@ -192,9 +192,11 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         # LoRAs are family-specific (Pony≠Illustrious≠SDXL) — filter to the model's family.
         def _loras_for(model_value):
-            return gr.update(choices=discovery.lora_choices(
+            up = gr.update(choices=discovery.lora_choices(
                 family=discovery.model_family(model_value)), value=[])
-        s["model"].change(_loras_for, inputs=[s["model"]], outputs=[s["loras"]])
+            return up, up  # settings bar + inpaint LoRAs accordion
+        s["model"].change(_loras_for, inputs=[s["model"]],
+                          outputs=[s["loras"], c["inpaint"]["inpaint_loras"]])
 
         # -- base candidates --
         def _gen_base(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
@@ -463,8 +465,21 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         _FILL = {"fill": 0, "original": 1, "latent noise": 2, "latent nothing": 3}
 
+        def _parse_loras(sel, mult):
+            if not sel:
+                return []
+            try:
+                ws = [float(x) for x in (mult or "").split(",") if x.strip()]
+            except ValueError:
+                ws = []
+            out = []
+            for i, p in enumerate(sel):
+                w = ws[i] if i < len(ws) else (ws[-1] if ws else 1.0)
+                out.append({"name": p, "weight": w})
+            return out
+
         def _run_inpaint(state, model, ev, ip_prompt, ip_neg, ip_denoise, count,
-                         mask_blur, fill, full_res, padding, gallery,
+                         mask_blur, fill, full_res, padding, loras_sel, lora_mult, gallery,
                          steps, cfg, seed, sampler, scheduler, clip_skip,
                          progress=gr.Progress()):
             backend, ident = discovery.parse_model_value(model)
@@ -490,7 +505,9 @@ class ReplicantCharLab(WAN2GPPlugin):
                                       mask_blur=int(mask_blur),
                                       inpainting_fill=_FILL.get(fill, 1),
                                       full_res=bool(full_res), padding=int(padding),
-                                      batch_size=int(count), progress=progress)
+                                      batch_size=int(count),
+                                      loras=_parse_loras(loras_sel, lora_mult),
+                                      progress=progress)
             finally:
                 self.release_gpu(state)
             if not outs:
@@ -504,8 +521,9 @@ class ReplicantCharLab(WAN2GPPlugin):
             inputs=[self.state, s["model"], inp["editor"], inp["inpaint_prompt"],
                     inp["inpaint_neg"], inp["inpaint_denoise"], inp["inpaint_count"],
                     inp["inpaint_mask_blur"], inp["inpaint_fill"], inp["inpaint_full_res"],
-                    inp["inpaint_padding"], inp["inpaint_gallery"], s["steps"],
-                    s["cfg_scale"], s["seed"], s["sampler"], s["scheduler"], s["clip_skip"]],
+                    inp["inpaint_padding"], inp["inpaint_loras"], inp["inpaint_lora_mult"],
+                    inp["inpaint_gallery"], s["steps"], s["cfg_scale"], s["seed"],
+                    s["sampler"], s["scheduler"], s["clip_skip"]],
             outputs=[inp["inpaint_gallery"]])
 
         def _pick_inpaint(evt: gr.SelectData):
@@ -556,7 +574,7 @@ class ReplicantCharLab(WAN2GPPlugin):
         inp["reuse_cohesion"].click(_need, inputs=[inp["cohesion_picked"]],
                                     outputs=[inp["cohesion_src"]])
 
-        # -- Cohesion mode: gentle img2img normalize using the character prompt --
+        # -- Cohesion mode: gentle img2img normalize (own prompts, this subtab only) --
         def _normalize(state, model, src, pos, neg, focus, cfg, steps,
                        progress=gr.Progress()):
             if not src:
@@ -583,8 +601,9 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         inp["normalize_btn"].click(
             _normalize,
-            inputs=[self.state, s["model"], inp["cohesion_src"], base["pos"], base["neg"],
-                    inp["cohesion_focus"], inp["cohesion_cfg"], inp["cohesion_steps"]],
+            inputs=[self.state, s["model"], inp["cohesion_src"], inp["cohesion_prompt"],
+                    inp["cohesion_neg"], inp["cohesion_focus"], inp["cohesion_cfg"],
+                    inp["cohesion_steps"]],
             outputs=[inp["cohesion_gallery"]])
 
         def _pick_cohesion(evt: gr.SelectData):
