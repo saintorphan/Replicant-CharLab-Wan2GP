@@ -29,7 +29,21 @@ STYLES = ["realism", "anime", "cartoon"]
 # per step — base/pose gen read from there.
 
 
-def build_info(visible: bool):
+def _init_img(init, key):
+    """Restored image path for a component constructor (None if missing/gone)."""
+    import os
+    v = (init or {}).get(key)
+    return v if (isinstance(v, str) and os.path.isfile(v)) else None
+
+
+def _init_gallery(init, key):
+    import os
+    vs = (init or {}).get(key) or []
+    out = [v for v in vs if isinstance(v, str) and os.path.isfile(v)]
+    return out or None
+
+
+def build_info(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ① Character Info")
         c = {}
@@ -48,14 +62,15 @@ def build_info(visible: bool):
                 gr.Markdown("<sub>A reference image skips **Base Gen** — it becomes the "
                             "base directly.</sub>")
                 c["reference_image"] = gr.Image(label="Reference image (optional)",
-                                                type="filepath", height=360)
+                                                type="filepath", height=360,
+                                                value=_init_img(init, "info.reference_image"))
         gr.Markdown("<sub>All fields autosave; restored next launch. LoRAs are picked "
                     "in the Generation settings bar.</sub>")
         c["clear_btn"] = gr.Button("🗑 Clear Wizard", variant="stop")
     return g, c
 
 
-def build_prompt(visible: bool):
+def build_prompt(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ② Prompts")
         gr.Markdown("<sub>Enhancement uses Wan2GP's abliterated Qwen3.5 enhancer.</sub>")
@@ -70,7 +85,7 @@ def build_prompt(visible: bool):
     return g, c
 
 
-def build_base(visible: bool):
+def build_base(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ③ Base Generation")
         gr.Markdown("<sub>Generate full-body, front-facing candidates; pick one as "
@@ -82,14 +97,16 @@ def build_base(visible: bool):
         with gr.Row():
             with gr.Column(scale=2):
                 c["candidates"] = gr.Gallery(label="Candidates — click to select",
-                                             columns=3, height=420, show_fullscreen_button=True)
+                                             columns=3, height=420, show_fullscreen_button=True,
+                                             value=_init_gallery(init, "base.candidates"))
             with gr.Column(scale=1):
                 c["selected_base"] = gr.Image(label="Selected base", type="filepath",
-                                              height=420, show_fullscreen_button=True)
+                                              height=420, show_fullscreen_button=True,
+                                              value=_init_img(init, "base.selected_base"))
     return g, c
 
 
-def build_swap(visible: bool):
+def build_swap(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ④ Face / Body Swap")
         gr.Markdown("<sub>Optional — lock identity/body on the **base image**. Pose "
@@ -142,7 +159,7 @@ def build_swap(visible: bool):
     return g, c
 
 
-def build_poses(visible: bool):
+def build_poses(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ⑤ Pose Variants")
         gr.Markdown(f"<sub>{len(poses.POSES)} predefined poses (full / medium / close, "
@@ -158,7 +175,7 @@ def build_poses(visible: bool):
     return g, c
 
 
-def build_save(visible: bool):
+def build_save(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ⑥ Save Character")
         c = {}
@@ -169,7 +186,7 @@ def build_save(visible: bool):
     return g, c
 
 
-def build_train(visible: bool):
+def build_train(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ⑦ Train LoRA")
         gr.Markdown("<sub>Low-VRAM preset is auto-selected from your Wan2GP profile "

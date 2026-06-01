@@ -59,7 +59,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
     # Step panels -----------------------------------------------------------
     groups, comps = [], {}
     for i, builder in enumerate(BUILDERS):
-        g, c = builder(visible=(i == 0))
+        g, c = builder(visible=(i == 0), init=init)
         groups.append(g)
         comps[STEPS[i][0]] = c
 
@@ -126,10 +126,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
             "poses_state": poses_state}
 
 
-# Fields autosaved/restored. Keyed "<group>.<name>"; "settings.*" come from the bar.
-# Image components are intentionally NOT persisted: their values are temp file
-# paths (gone after restart) and restoring a bare string into a gr.Image that is
-# also an event input breaks Gradio's ImageData validation.
+# SCALAR fields autosaved/restored via post-hoc .value. Keyed "<group>.<name>".
 _PERSIST_SPEC = {
     "info": ["name", "description", "style"],
     "prompt": ["positive_prompt", "negative_prompt"],
@@ -141,43 +138,115 @@ _PERSIST_SPEC = {
     "poses": ["ref_look_strength", "apply_body_to_poses"],
     "train": ["dataset", "low_vram", "epochs"],
 }
-_IMAGE_KEYS = set()  # no image fields persisted
+# IMAGE/gallery fields persisted separately: copied to a stable dir and restored
+# via the component CONSTRUCTOR (post-hoc .value on a gr.Image breaks ImageData
+# validation when it's also an event input). Key -> (group, name).
+_IMAGE_FIELDS = [("info.reference_image", "info", "reference_image"),
+                 ("base.selected_base", "base", "selected_base")]
+_GALLERY_FIELDS = [("base.candidates", "base", "candidates")]
+
+
+def _persist_dir():
+    return paths.cache_dir() / "persist"
+
+
+def _extract_path(item):
+    if isinstance(item, str):
+        return item
+    if isinstance(item, (list, tuple)) and item:
+        return _extract_path(item[0])
+    if isinstance(item, dict):
+        return item.get("path") or (item.get("image") or {}).get("path") or item.get("name")
+    return None
+
+
+def _stable_image(path, key):
+    import shutil
+    if not (isinstance(path, str) and os.path.isfile(path)):
+        return None
+    d = _persist_dir(); d.mkdir(parents=True, exist_ok=True)
+    ext = os.path.splitext(path)[1] or ".png"
+    dst = d / (key.replace(".", "_") + ext)
+    try:
+        if os.path.abspath(path) != os.path.abspath(dst):
+            shutil.copy2(path, dst)
+        return str(dst)
+    except Exception:
+        return path
+
+
+def _stable_gallery(vals):
+    import shutil
+    d = _persist_dir() / "candidates"
+    shutil.rmtree(d, ignore_errors=True); d.mkdir(parents=True, exist_ok=True)
+    out = []
+    for i, item in enumerate(vals or []):
+        p = _extract_path(item)
+        if p and os.path.isfile(p):
+            dst = d / f"cand_{i:02d}{os.path.splitext(p)[1] or '.png'}"
+            try:
+                shutil.copy2(p, dst); out.append(str(dst))
+            except Exception:
+                out.append(p)
+    return out
 
 
 def _wire_persistence(comps, settings, poses_state, init):
-    pairs = []  # (key, component)
+    # --- scalar fields ---
+    pairs = []
     for group, names in _PERSIST_SPEC.items():
         src = settings if group == "settings" else comps.get(group, {})
         for name in names:
             comp = src.get(name)
             if comp is not None:
                 pairs.append((f"{group}.{name}", comp))
-
     keys = [k for k, _ in pairs]
     fields = [c for _, c in pairs]
-    defaults = {k: c.value for k, c in pairs}  # builder defaults (captured pre-restore)
-
-    # Restore persisted values (skip image paths whose temp file is gone).
+    defaults = {k: c.value for k, c in pairs}
     for k, c in pairs:
         if k in init:
-            v = init[k]
-            if k in _IMAGE_KEYS and not (isinstance(v, str) and os.path.isfile(v)):
-                continue
-            c.value = v
+            c.value = init[k]
 
-    def _save(*vals):
-        wizard_state.save(dict(zip(keys, vals)))
-
+    def _save_scalars(*vals):
+        d = wizard_state.load()
+        d.update(dict(zip(keys, vals)))
+        wizard_state.save(d)
     for c in fields:
-        c.change(_save, inputs=fields, outputs=[])
+        c.change(_save_scalars, inputs=fields, outputs=[])
 
-    # Clear Wizard: reset every field to its builder default + wipe persisted state.
+    # --- image fields (copied to a stable dir; restored via constructor) ---
+    img_comps = []
+    for key, group, name in _IMAGE_FIELDS:
+        comp = comps.get(group, {}).get(name)
+        if comp is None:
+            continue
+        img_comps.append(comp)
+
+        def _save_img(path, _k=key):
+            d = wizard_state.load(); d[_k] = _stable_image(path, _k); wizard_state.save(d)
+        comp.change(_save_img, inputs=[comp], outputs=[])
+
+    # --- candidate gallery ---
+    gal = comps.get("base", {}).get("candidates")
+    if gal is not None:
+        def _save_gal(vals):
+            d = wizard_state.load(); d["base.candidates"] = _stable_gallery(vals)
+            wizard_state.save(d)
+        gal.change(_save_gal, inputs=[gal], outputs=[])
+
+    # --- Clear Wizard: reset everything + wipe persisted state/files ---
     clear_btn = comps["info"].get("clear_btn")
     if clear_btn is not None:
+        import shutil
+        clear_outputs = fields + img_comps + ([gal] if gal is not None else []) + [poses_state]
+
         def _clear():
             wizard_state.clear()
-            return [defaults[k] for k in keys] + [{"poses": [], "specs": []}]
-        clear_btn.click(_clear, outputs=fields + [poses_state])
+            shutil.rmtree(_persist_dir(), ignore_errors=True)
+            return ([defaults[k] for k in keys]
+                    + [None] * len(img_comps) + ([None] if gal is not None else [])
+                    + [{"poses": [], "specs": []}])
+        clear_btn.click(_clear, outputs=clear_outputs)
 
 
 def _summary(cs, cdir) -> str:
