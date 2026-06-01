@@ -212,7 +212,8 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         # Reimagine the reference (img2img) — SD-family only.
         def _reimagine(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
-                       width, height, pos, neg, denoise, ref_img, progress=gr.Progress()):
+                       width, height, pos, neg, denoise, count, ref_img,
+                       progress=gr.Progress()):
             backend, ident = discovery.parse_model_value(model)
             if backend != "sd":
                 raise gr.Error("Reimagine (img2img) needs an SDXL/Pony/Illustrious model.")
@@ -223,13 +224,15 @@ class ReplicantCharLab(WAN2GPPlugin):
             self._release_faceswap()
             if not self.acquire_gpu(state):
                 return gr.update(), gr.update()
+            files, n = [], int(count)
             try:
-                sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
-                progress(0.1, desc="Reimagining reference (img2img)…")
-                files = gen_sd.generate_img2img(
-                    ident, ref_img, pos, neg, width, height, steps, cfg, sd,
-                    denoise=float(denoise), sampler=sampler, scheduler=scheduler,
-                    clip_skip=int(clip_skip))
+                for i in range(n):
+                    sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
+                    progress((i, n), desc=f"Reimagining {i + 1}/{n} (img2img)")
+                    files += gen_sd.generate_img2img(
+                        ident, ref_img, pos, neg, width, height, steps, cfg, sd,
+                        denoise=float(denoise), sampler=sampler, scheduler=scheduler,
+                        clip_skip=int(clip_skip))
             finally:
                 self.release_gpu(state)
             if not files:
@@ -239,7 +242,7 @@ class ReplicantCharLab(WAN2GPPlugin):
         base["reimagine"].click(
             _reimagine,
             inputs=[self.state] + SET + [prm["positive_prompt"], prm["negative_prompt"],
-                                         base["denoise"], base["ref_avatar"]],
+                                         base["denoise"], base["count"], base["ref_avatar"]],
             outputs=[base["candidates"], base["selected_base"]])
 
         # -- step 4: face swap onto the base (optional) --
