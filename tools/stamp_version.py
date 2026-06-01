@@ -36,8 +36,10 @@ def stamp(version: str = VERSION) -> None:
     font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
     draw = ImageDraw.Draw(img)
     draw.text((POS_X, H - POS_Y_FROM_BOTTOM), version, font=font, fill=COLOR, anchor=ANCHOR)
+    # Keep RGBA on BOTH so the transparent background is preserved (the plugin
+    # banner loads assets/replicant.png; RGB here was dropping transparency).
     img.save(ROOT / "replicant.png")
-    img.convert("RGB").save(ROOT / "assets" / "replicant.png")
+    img.save(ROOT / "assets" / "replicant.png")
     print(f"stamped {version!r} at x={POS_X}, baseline_y={H - POS_Y_FROM_BOTTOM}, size={FONT_SIZE}")
 
 
