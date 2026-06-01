@@ -61,7 +61,8 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
                       "swaps / poses)")
             gr.HTML('<div class="replicant-ghlink"><a href="https://github.com/'
                     'saintorphan/Replicant-CharLab-Wan2GP" target="_blank" '
-                    'rel="noopener">⧉ GitHub repo</a></div>')
+                    'rel="noopener">github.com/saintorphan/Replicant-CharLab-Wan2GP'
+                    '</a></div>')
 
     # Prerequisites (directories + models) ----------------------------------
     prereqs = build_prereqs()

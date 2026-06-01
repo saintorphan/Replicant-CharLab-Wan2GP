@@ -18,7 +18,7 @@ button.replicant-tabbtn {
 /* Clear Wizard column: centered, narrower button, nudged up; GitHub link below. */
 #replicant-clearcol { align-items: center; transform: translateY(-8px); }
 #replicant-clearcol button { margin: 0 auto; }
-.replicant-ghlink { text-align: center; margin-top: 6px; font-size: 0.9em; }
+.replicant-ghlink { text-align: center; margin-top: 6px; font-size: 1.8em; }
 .replicant-ghlink a { color: #a64dff; text-decoration: none; }
 .replicant-ghlink a:hover { text-decoration: underline; }
 #replicant-header #replicant-banner { margin: 0; text-align: center; }
