@@ -55,6 +55,28 @@ def get_pipeline():
     return _pipeline
 
 
+def _free_torch():
+    import gc
+    import torch
+    gc.collect()
+    try:
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def release_sd():
+    """Unload the cached SD txt2img pipeline + free its VRAM (the SDXL checkpoint
+    is ~6.5GB). Call before a different heavy model needs the GPU."""
+    global _pipeline
+    try:
+        if _pipeline is not None:
+            _pipeline.unload()
+    except Exception:
+        logger.debug("SD unload failed", exc_info=True)
+    _free_torch()
+
+
 def available() -> bool:
     """True if the SD pipeline can be imported (checkout present)."""
     try:
@@ -120,7 +142,8 @@ def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
     _import_pipeline_cls()  # ensure SD_CHECKOUT on sys.path
     from supremediffusion.core.image_pipeline import ImageGenerationPipeline
     from supremediffusion.config.project_config import ProjectConfig
-    from supremediffusion.models.segmentation import segment_foreground
+    from supremediffusion.models.segmentation import (segment_foreground,
+                                                       release_segmentation_model)
     from supremediffusion.models.controlnet_types import (run_preprocessor,
                                                           preprocessor_overrides_for)
 
@@ -144,7 +167,10 @@ def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
     cfg_obj.adetailer = bool(adetailer)
 
     with models.no_auto_download():  # never silently pull BiRefNet/ControlNet/IP-Adapter
+        release_sd()  # free the txt2img checkpoint so BiRefNet/body-double fit
         mask = segment_foreground(base_path, models_root)
+        release_segmentation_model()  # free BiRefNet before the SD body-double loads
+        _free_torch()
         try:
             target_img = Image.open(base_path).convert("RGB")
             control = [run_preprocessor("openpose", target_img,
@@ -160,3 +186,12 @@ def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
                 os.unlink(mask)
             except Exception:
                 pass
+            try:  # free body-double controlnet/ip-adapter VRAM for the next step
+                p = get_pipeline()
+                if hasattr(p, "unload_body_double"):
+                    p.unload_body_double()
+                if hasattr(p, "unload_controlnet"):
+                    p.unload_controlnet()
+            except Exception:
+                pass
+            _free_torch()

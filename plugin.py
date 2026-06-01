@@ -125,6 +125,16 @@ class ReplicantCharLab(WAN2GPPlugin):
             self._faceswap = faceswap.FaceSwapPipeline(str(paths.models_dir() / "face"))
         return self._faceswap
 
+    def _release_faceswap(self):
+        """Free the InsightFace + ONNX swap models from VRAM."""
+        try:
+            if getattr(self, "_faceswap", None) is not None:
+                self._faceswap.release()
+        except Exception:
+            pass
+        self._faceswap = None
+        gen_sd._free_torch()
+
     def _gen_image(self, state, model_value, pos, neg, w, h, steps, cfg, seed,
                    sampler, scheduler, clip_skip):
         """One image via the routed backend. Returns list of saved paths."""
@@ -176,6 +186,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                       width, height, pos, neg, count, progress=gr.Progress()):
             if not (pos and pos.strip()):
                 raise gr.Error("Build or enhance a positive prompt on step 2 first.")
+            self._release_faceswap()  # base gen is pure SD — free InsightFace VRAM
             files, n = [], int(count)
             for i in range(n):
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
@@ -206,6 +217,7 @@ class ReplicantCharLab(WAN2GPPlugin):
             if not face_src:
                 raise gr.Error("Provide a face source image.")
             self._require(["inswapper_128", "buffalo_l"], "Face swap")
+            gen_sd.release_sd()  # face swap doesn't need the SD checkpoint — free it
             if not self.acquire_gpu(state):
                 return gr.update()
             try:
@@ -250,6 +262,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 raise gr.Error("Body swap needs an SDXL/Pony/Illustrious model selected "
                                "(ControlNet + IP-Adapter are SD-only).")
             self._require(models.BODY_SWAP_KEYS + ["controlnet_openpose_sdxl"], "Body swap")
+            self._release_faceswap()  # free InsightFace before the body-double stack
             if not self.acquire_gpu(state):
                 return gr.update()
             try:
@@ -310,6 +323,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 gallery.append(final)
                 specs.append({"distance": ps.distance, "angle": ps.angle,
                               "orientation": ps.orientation})
+            self._release_faceswap()  # free InsightFace after the pose loop
             if not gallery:
                 raise gr.Error("No poses were generated.")
             return gallery, {"poses": gallery, "specs": specs}
