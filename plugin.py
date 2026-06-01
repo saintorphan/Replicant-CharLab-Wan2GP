@@ -54,6 +54,7 @@ class ReplicantCharLab(WAN2GPPlugin):
         self.request_global("exec_prompt_enhancer_engine")
         self.request_global("get_state_model_type")
         self.request_global("get_model_def")
+        self.request_global("get_default_settings")  # base/pose image generation
 
         self.add_tab(tab_id=PLUGIN_ID, label=PLUGIN_NAME,
                      component_constructor=self.create_ui)
@@ -85,15 +86,70 @@ class ReplicantCharLab(WAN2GPPlugin):
             release_GPU_ressources(state, PLUGIN_ID)
 
     # -- UI -----------------------------------------------------------------
-    def create_ui(self):
+    def create_ui(self, api_session):
+        self._api = api_session
         gr.HTML(f"<style>{CSS}</style>")
         with gr.Column():
             ui = wizard.build_wizard()
         self._wire_enhancer(ui)
+        self._wire_base_gen(ui)
         # Outputs refreshed when the tab is (re)selected; bounce target is main_tabs.
         self.on_tab_outputs = [self.main_tabs] if hasattr(self, "main_tabs") else None
         self._ui = ui
         return ui
+
+    def _wire_base_gen(self, ui):
+        """Step 3: generate base candidates via Wan2GP's API session (image_mode)."""
+        base, prm = ui["components"]["base"], ui["components"]["prompt"]
+        if not (getattr(self, "_api", None) and hasattr(self, "get_default_settings")
+                and hasattr(self, "get_state_model_type")):
+            return  # session/globals unavailable
+
+        def _gen(state, model, pos, neg, count, steps, cfg, seed, width, height,
+                 progress=gr.Progress()):
+            if not (pos and pos.strip()):
+                raise gr.Error("Build or enhance a positive prompt on step 2 first.")
+            model_type = model or self.get_state_model_type(state)
+            if not model_type:
+                raise gr.Error("Pick an image model (or select one in Video Generator).")
+            import random
+            files = []
+            n = int(count)
+            for i in range(n):
+                s = int(seed) if int(seed) >= 0 else random.randint(0, 2**31 - 1)
+                settings = dict(self.get_default_settings(model_type))
+                settings.update({
+                    "model_type": model_type, "image_mode": 1,
+                    "prompt": pos, "negative_prompt": neg or "",
+                    "resolution": f"{int(width)}x{int(height)}",
+                    "num_inference_steps": int(steps), "guidance_scale": float(cfg),
+                    "seed": s, "video_length": 1, "batch_size": 1,
+                })
+                progress((i, n), desc=f"Generating base {i + 1}/{n}")
+                result = self._api.submit_task(settings).result()
+                if result.success and result.generated_files:
+                    files.extend(result.generated_files)
+                elif result.errors:
+                    raise gr.Error(str(list(result.errors)[0]))
+            if not files:
+                raise gr.Error("Generation produced no images.")
+            return files, files[0]
+
+        base["generate"].click(
+            _gen,
+            inputs=[self.state, base["model"], prm["positive_prompt"], prm["negative_prompt"],
+                    base["count"], base["steps"], base["cfg_scale"], base["seed"],
+                    base["width"], base["height"]],
+            outputs=[base["candidates"], base["selected_base"]],
+        )
+
+        def _pick(evt: gr.SelectData):
+            v = evt.value
+            if isinstance(v, dict):
+                return v.get("image", {}).get("path") or v.get("path") or gr.update()
+            return v if isinstance(v, str) else gr.update()
+
+        base["candidates"].select(_pick, outputs=[base["selected_base"]])
 
     def _wire_enhancer(self, ui):
         """Wire the Prompt step's Enhance buttons to Wan2GP's native enhancer."""
