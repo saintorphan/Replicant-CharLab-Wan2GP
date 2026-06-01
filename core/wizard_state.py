@@ -17,11 +17,30 @@ def _path():
     return paths.lab_root() / ".wizard_state.json"
 
 
+# Old persisted keys -> current keys (Info+Prompt pages were merged into "Setup").
+_MIGRATE = {
+    "info.name": "setup.name",
+    "info.description": "setup.description",
+    "info.style": "setup.style",
+    "info.reference_image": "setup.reference_image",
+    "prompt.positive_prompt": "setup.positive_prompt",
+    "prompt.negative_prompt": "setup.negative_prompt",
+}
+
+
 def load() -> dict:
     try:
-        return json.loads(_path().read_text())
+        d = json.loads(_path().read_text())
     except Exception:
         return {}
+    changed = False
+    for old, new in _MIGRATE.items():
+        if old in d:
+            d.setdefault(new, d.pop(old))
+            changed = True
+    if changed:
+        save(d)  # rewrite under the new key names
+    return d
 
 
 def save(data: dict) -> None:
