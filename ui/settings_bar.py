@@ -32,7 +32,6 @@ def build_settings_bar(model_choices=None, lora_choices=None):
         with gr.Row():
             c["width"] = gr.Slider(256, 2048, value=832, step=64, label="Width")
             c["height"] = gr.Slider(256, 2048, value=1216, step=64, label="Height")
-            c["adetailer"] = gr.Checkbox(value=True, label="ADetailer (SD)")
         with gr.Row():
             c["loras"] = gr.Dropdown(label="LoRAs", multiselect=True,
                                      choices=lora_choices or [], scale=3)

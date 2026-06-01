@@ -144,8 +144,13 @@ def generate_img2img(checkpoint_path, image_path, prompt, negative, width, heigh
 
 def inpaint(checkpoint_path, image_path, mask_image, prompt, negative, denoise=0.75,
             steps=30, cfg=6.0, seed=-1, sampler="DPM++ 2M", scheduler="Karras",
-            clip_skip=1, out_dir=None, progress=None) -> str | None:
-    """Prompt-driven masked inpaint for manual touch-ups (no IP-Adapter)."""
+            clip_skip=1, mask_blur=4, inpainting_fill=1, full_res=False, padding=32,
+            out_dir=None, progress=None) -> str | None:
+    """Prompt-driven masked inpaint for manual touch-ups (no IP-Adapter).
+
+    Inpaint-specific params mirror SupremeDiffusion's generate_inpaint: ``mask_blur``
+    (px), ``inpainting_fill`` (0 fill / 1 original / 2 latent-noise / 3 latent-nothing),
+    ``full_res`` (inpaint only the masked region at full res) and ``padding`` (px)."""
     import random as _random
     from PIL import Image
     pipe = get_pipeline()
@@ -159,7 +164,9 @@ def inpaint(checkpoint_path, image_path, mask_image, prompt, negative, denoise=0
             image=img, mask=mask_image, prompt=prompt or "", negative_prompt=negative or "",
             denoising_strength=float(denoise), width=int(w), height=int(h), steps=int(steps),
             cfg_scale=float(cfg), seed=int(seed), sampler=sampler, scheduler=scheduler,
-            clip_skip=int(clip_skip), full_res=False)
+            clip_skip=int(clip_skip), mask_blur=int(mask_blur),
+            inpainting_fill=int(inpainting_fill), full_res=bool(full_res),
+            padding=int(padding))
     out = Path(out_dir) if out_dir else (paths.cache_dir() / "inpaint")
     out.mkdir(parents=True, exist_ok=True)
     for i, im in enumerate(images or []):
@@ -179,6 +186,30 @@ def inpaint(checkpoint_path, image_path, mask_image, prompt, negative, denoise=0
 _inpaint_pipe = None
 _inpaint_ckpt = None
 _inpaint_with_ip = None
+
+# Cooperative abort: the UI sets the flag; the diffusers step callback below trips
+# the pipeline's _interrupt so the denoising loop bails out early.
+_abort_flag = False
+
+
+def request_abort():
+    global _abort_flag
+    _abort_flag = True
+
+
+def clear_abort():
+    global _abort_flag
+    _abort_flag = False
+
+
+def was_aborted() -> bool:
+    return _abort_flag
+
+
+def _abort_callback(pipe, step, timestep, kwargs):
+    if _abort_flag:
+        pipe._interrupt = True
+    return kwargs
 
 
 def release_inpaint():
@@ -331,7 +362,10 @@ def ip_adapter_inpaint(checkpoint_path, target_path, reference_path, mask_image,
         img = pipe(prompt=prompt or "", negative_prompt=negative or "",
                    image=target, mask_image=mask_image, ip_adapter_image=ref,
                    strength=float(denoise), num_inference_steps=int(steps),
-                   guidance_scale=float(cfg), width=w, height=h, generator=gen).images[0]
+                   guidance_scale=float(cfg), width=w, height=h, generator=gen,
+                   callback_on_step_end=_abort_callback).images[0]
+    if _abort_flag:  # interrupted mid-run — discard the partial result
+        return None
     out = Path(out_dir) if out_dir else (paths.cache_dir() / "swap")
     out.mkdir(parents=True, exist_ok=True)
     f = out / f"ipinpaint_{int(seed)}_{int(time.time())}.png"
@@ -430,17 +464,20 @@ def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
                 progress(frac, desc=msg)
             except Exception:
                 pass
+    clear_abort()
     _import_pipeline_cls()
     models_root = str(Path(SD_CHECKOUT) / "models")
     release_sd()  # free the txt2img checkpoint
     _say(0.2, "Segmenting body (head excluded)…")
     mask = head_excluded_body_mask(base_path, models_root)
+    if was_aborted():
+        return None
     _say(0.55, "Applying source skin/texture (IP-Adapter inpaint)…")
     res = ip_adapter_inpaint(checkpoint_path, base_path, source_person_path, mask,
                              prompt, negative, denoise=float(denoise),
                              ip_scale=float(ip_scale), steps=int(steps),
                              cfg=float(cfg), seed=int(seed), progress=progress)
-    if adetailer and res:
+    if adetailer and res and not was_aborted():
         _say(0.9, "ADetailer face refine…")
         try:
             return run_adetailer(checkpoint_path, res,

@@ -51,12 +51,12 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
                     '<div class="replicant-tagline">Supports Wan, LTX, Z-Image, Flux,<br>'
                     'SDXL, Pony, and Illustrious!</div>'
                     '</div>')
-        with gr.Column(scale=10):
+        with gr.Column(scale=10, elem_id="replicant-bannercol"):
             gr.HTML(_banner_html())
             gr.HTML('<div class="replicant-ghlink"><a href="https://github.com/'
                     'saintorphan/Replicant-CharLab-Wan2GP" target="_blank" '
                     'rel="noopener">https://github.com/saintorphan/'
-                    'Replicant-CharLab-Wan2GP</a></div>')
+                    'Replicant-CharLab-Wan2GP</a></div>', elem_classes="replicant-ghwrap")
         with gr.Column(scale=3, min_width=200, elem_id="replicant-clearcol"):
             header_clear_files = gr.Checkbox(value=False,
                 label="Delete all unsaved generations (candidates / base / reference / "
@@ -96,7 +96,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
 
     sw, sh = settings["width"], settings["height"]
     nav_outputs = groups + rail + [back_btn, next_btn, step, sw, sh]
-    _BASE_STEP = 1  # ② Base Gen — forced portrait + locked dims
+    _PORTRAIT_STEPS = {1, 3}  # ② Base Gen and ④ Touch Up — forced portrait + locked dims
 
     def _set_step(target: int):
         target = max(0, min(_N - 1, int(target)))
@@ -105,7 +105,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
         updates += [gr.update(interactive=(target > 0)),
                     gr.update(interactive=(target < _N - 1)),
                     target]
-        if target == _BASE_STEP:  # base must be a full-body portrait
+        if target in _PORTRAIT_STEPS:  # full-body portrait, dims locked
             updates += [gr.update(value=832, interactive=False),
                         gr.update(value=1216, interactive=False)]
         else:
@@ -163,7 +163,7 @@ _PERSIST_SPEC = {
     "setup": ["name", "description", "style", "positive_prompt", "negative_prompt"],
     "base": ["count", "denoise"],
     "settings": ["model", "sampler", "scheduler", "steps", "cfg_scale", "clip_skip",
-                 "seed", "width", "height", "adetailer", "loras", "lora_multipliers"],
+                 "seed", "width", "height", "loras", "lora_multipliers"],
     "swap": ["face_enhancer", "face_enhancer_strength", "face_blend_ratio",
              "face_adetailer", "face_adet_pos", "face_adet_neg",
              "body_ip_scale", "body_denoise", "body_cfg", "body_cn_strength",
@@ -310,7 +310,7 @@ def _wire_load_save(comps, settings, poses_state):
                     prm["positive_prompt"], prm["negative_prompt"],
                     info["reference_image"], base["selected_base"],
                     settings["steps"], settings["cfg_scale"], settings["seed"],
-                    settings["width"], settings["height"], settings["adetailer"]]
+                    settings["width"], settings["height"]]
 
     def _load(sel):
         if not sel:
@@ -318,7 +318,7 @@ def _wire_load_save(comps, settings, poses_state):
         cs = character.load_character(paths.character_dir(sel))
         return [cs.name, cs.description, cs.style, cs.positive_prompt, cs.negative_prompt,
                 cs.reference_image or None, cs.selected_base or None,
-                cs.steps, cs.cfg_scale, cs.seed, cs.width, cs.height, cs.adetailer]
+                cs.steps, cs.cfg_scale, cs.seed, cs.width, cs.height]
 
     info["load_btn"].click(_load, inputs=[info["load_existing"]], outputs=load_outputs)
 
@@ -336,11 +336,11 @@ def _wire_load_save(comps, settings, poses_state):
                    info["reference_image"], base["selected_base"],
                    swap["face_source"], swap["body_source"],
                    settings["steps"], settings["cfg_scale"], settings["seed"],
-                   settings["width"], settings["height"], settings["adetailer"],
+                   settings["width"], settings["height"],
                    poses_state]
 
     def _save(name, desc, style, pos, neg, ref, sbase, face_src, body_src,
-              steps, cfg, seed, width, height, adet, poses_data,
+              steps, cfg, seed, width, height, poses_data,
               progress=gr.Progress()):
         if not (name and name.strip()):
             return "⚠️ Enter a character name first.", gr.update()
@@ -354,7 +354,7 @@ def _wire_load_save(comps, settings, poses_state):
             approved_poses=list(pd.get("poses", [])),
             approved_pose_specs=list(pd.get("specs", [])),
             steps=int(steps), cfg_scale=float(cfg), seed=int(seed),
-            width=int(width), height=int(height), adetailer=bool(adet))
+            width=int(width), height=int(height))
         cdir = paths.character_dir(name)
         character.save_character(cdir, cs)
         msg = f"✅ Saved to `{cdir}`"

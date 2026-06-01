@@ -22,6 +22,11 @@ button.replicant-tabbtn {
 #replicant-clearbtn:hover { background: #b71c1c !important; border-color: #b71c1c !important; }
 .replicant-ghlink { text-align: center; margin: 0; padding: 0; font-size: 1.5em;
     line-height: 1; }
+/* Kill the gradio block padding around the link and the column's flex gap. */
+.replicant-ghwrap { padding: 0 !important; margin: 0 !important; min-height: 0 !important;
+    border: none !important; }
+#replicant-bannercol { gap: 0 !important; }
+#replicant-bannercol #replicant-banner { margin-bottom: 0 !important; }
 .replicant-ghlink a { color: #e83e8c; text-decoration: none; }
 .replicant-ghlink a:hover { text-decoration: underline; }
 #replicant-header #replicant-banner { margin: 0; text-align: center; }
@@ -45,6 +50,14 @@ button.replicant-tabbtn {
 /* Prerequisites + its Directories/Models sub-accordion headers: 2x, bold */
 .replicant-acc > .label-wrap span,
 .replicant-acc > button.label-wrap span { font-size: 2em !important; font-weight: 700 !important; }
+
+/* Touch Up: options column matches the canvas height; results strip scrolls sideways. */
+#replicant-inpaint-opts { max-height: 720px; overflow-y: auto; }
+#replicant-inpaint-out .grid-wrap { overflow-x: auto !important; }
+#replicant-inpaint-out .grid-container {
+    display: flex !important; flex-wrap: nowrap !important; }
+#replicant-inpaint-out .thumbnail-item { flex: 0 0 auto !important; height: 600px !important;
+    width: auto !important; }
 
 .replicant-step { border: 1px solid var(--border-color-primary);
     border-radius: 10px; padding: 16px; background: var(--background-fill-secondary); }

@@ -369,6 +369,9 @@ class ReplicantCharLab(WAN2GPPlugin):
             finally:
                 self.release_gpu(state)
             if not out:
+                if gen_sd.was_aborted():
+                    gr.Info("Body swap aborted.")
+                    return [None] + _lockset(None)
                 raise gr.Error("Body swap produced no image.")
             return [out] + _lockset("body")
 
@@ -380,12 +383,28 @@ class ReplicantCharLab(WAN2GPPlugin):
         def _body_click(mode, *args, progress=gr.Progress()):
             if mode == "review":  # Run button is showing Discard → drop the attempt
                 return [None, "idle"] + _lockset(None)
-            res = _run_body(*args, progress=progress)  # [result] + _lockset("body")
-            return [res[0], "review"] + res[1:]
+            res = _run_body(*args, progress=progress)  # [result] + _lockset(...)
+            new_mode = "review" if res[0] else "idle"  # aborted/failed → idle
+            return [res[0], new_mode] + res[1:]
 
-        swap["run_body"].click(_body_click, inputs=[swap["body_mode"]] + body_in,
-                               outputs=[swap["result"], swap["body_mode"]] + LOCK)
-        swap["retry_body"].click(_run_body, inputs=body_in, outputs=[swap["result"]] + LOCK)
+        def _show_abort():   # reset + reveal the abort button as a swap starts
+            return gr.update(visible=True, value="⛔ Abort body swap", interactive=True)
+
+        def _hide_abort():
+            return gr.update(visible=False)
+
+        def _do_abort():
+            gen_sd.request_abort()
+            return gr.update(value="Aborting…", interactive=False)
+
+        swap["run_body"].click(_show_abort, None, [swap["abort_body"]]).then(
+            _body_click, inputs=[swap["body_mode"]] + body_in,
+            outputs=[swap["result"], swap["body_mode"]] + LOCK).then(
+            _hide_abort, None, [swap["abort_body"]])
+        swap["retry_body"].click(_show_abort, None, [swap["abort_body"]]).then(
+            _run_body, inputs=body_in, outputs=[swap["result"]] + LOCK).then(
+            _hide_abort, None, [swap["abort_body"]])
+        swap["abort_body"].click(_do_abort, None, [swap["abort_body"]])
         swap["accept_body"].click(lambda res: [res or gr.update(), "idle"] + _lockset(None),
                                   inputs=[swap["result"]],
                                   outputs=[base["selected_base"], swap["body_mode"]] + LOCK)
@@ -410,10 +429,22 @@ class ReplicantCharLab(WAN2GPPlugin):
             lambda: (gr.update(visible=False), gr.update(visible=False)),
             outputs=[swap["ab_row"], swap["ab_close_row"]])
 
-        # -- inpaint touch-ups: paint a mask on the base, prompt-driven inpaint --
+        # -- Touch Up: Inpaint mode (mask) + Cohesion mode (img2img normalize) --
         inp = c["inpaint"]
         inp["load_base"].click(lambda b: b, inputs=[base["selected_base"]],
                                outputs=[inp["editor"]])
+
+        # Mode radio swaps the two sub-panels.
+        inp["touchup_mode"].change(
+            lambda m: (gr.update(visible=(m == "Inpaint")),
+                       gr.update(visible=(m == "Cohesion"))),
+            inputs=[inp["touchup_mode"]],
+            outputs=[inp["inpaint_grp"], inp["cohesion_grp"]])
+
+        # Keep both Touch Up sources mirroring the current base automatically.
+        base["selected_base"].change(lambda b: (b or gr.update(), b or gr.update()),
+                                     inputs=[base["selected_base"]],
+                                     outputs=[inp["editor"], inp["cohesion_src"]])
 
         def _editor_mask(ev):
             import numpy as np
@@ -430,7 +461,10 @@ class ReplicantCharLab(WAN2GPPlugin):
                     m = np.maximum(m, (L[..., :3].sum(2) > 0).astype("uint8") * 255)
             return bg, Image.fromarray(m, "L")
 
+        _FILL = {"fill": 0, "original": 1, "latent noise": 2, "latent nothing": 3}
+
         def _run_inpaint(state, model, ev, ip_prompt, ip_neg, ip_denoise,
+                         mask_blur, fill, full_res, padding, gallery,
                          steps, cfg, seed, sampler, scheduler, clip_skip,
                          progress=gr.Progress()):
             backend, ident = discovery.parse_model_value(model)
@@ -449,22 +483,107 @@ class ReplicantCharLab(WAN2GPPlugin):
                 import tempfile
                 tp = os.path.join(tempfile.mkdtemp(), "inp_src.png")
                 Image.fromarray(bg[..., :3] if bg.ndim == 3 else bg).save(tp)
-                return gen_sd.inpaint(ident, tp, mask, ip_prompt, ip_neg,
-                                      denoise=float(ip_denoise), steps=int(steps),
-                                      cfg=float(cfg), seed=int(seed), sampler=sampler,
-                                      scheduler=scheduler, clip_skip=int(clip_skip),
-                                      progress=progress) or gr.update()
+                out = gen_sd.inpaint(ident, tp, mask, ip_prompt, ip_neg,
+                                     denoise=float(ip_denoise), steps=int(steps),
+                                     cfg=float(cfg), seed=int(seed), sampler=sampler,
+                                     scheduler=scheduler, clip_skip=int(clip_skip),
+                                     mask_blur=int(mask_blur),
+                                     inpainting_fill=_FILL.get(fill, 1),
+                                     full_res=bool(full_res), padding=int(padding),
+                                     progress=progress)
             finally:
                 self.release_gpu(state)
+            if not out:
+                return gr.update()
+            history = [g[0] if isinstance(g, (list, tuple)) else g
+                       for g in (gallery or [])]
+            return history + [out]  # newest appended to the horizontal strip
 
         inp["run_inpaint"].click(
             _run_inpaint,
             inputs=[self.state, s["model"], inp["editor"], inp["inpaint_prompt"],
-                    inp["inpaint_neg"], inp["inpaint_denoise"], s["steps"], s["cfg_scale"],
-                    s["seed"], s["sampler"], s["scheduler"], s["clip_skip"]],
-            outputs=[inp["inpaint_result"]])
-        inp["use_inpaint"].click(lambda r: r or gr.update(), inputs=[inp["inpaint_result"]],
-                                 outputs=[base["selected_base"]])
+                    inp["inpaint_neg"], inp["inpaint_denoise"], inp["inpaint_mask_blur"],
+                    inp["inpaint_fill"], inp["inpaint_full_res"], inp["inpaint_padding"],
+                    inp["inpaint_gallery"], s["steps"], s["cfg_scale"], s["seed"],
+                    s["sampler"], s["scheduler"], s["clip_skip"]],
+            outputs=[inp["inpaint_gallery"]])
+
+        def _pick_inpaint(evt: gr.SelectData):
+            return evt.value.get("image", {}).get("path") if isinstance(evt.value, dict) \
+                else evt.value
+        inp["inpaint_gallery"].select(_pick_inpaint, outputs=[inp["inpaint_picked"]])
+
+        def _use_inpaint(picked, cur_base):
+            if not picked:
+                raise gr.Error("Click a result in the strip first.")
+            return picked, cur_base  # new base, remember previous for Revert
+        inp["use_inpaint"].click(_use_inpaint,
+                                 inputs=[inp["inpaint_picked"], base["selected_base"]],
+                                 outputs=[base["selected_base"], inp["inpaint_prev_base"]])
+        inp["revert_inpaint"].click(lambda prev: prev or gr.update(),
+                                    inputs=[inp["inpaint_prev_base"]],
+                                    outputs=[base["selected_base"]])
+
+        # Bounce a selected result between the two Touch Up modes as the new editable
+        # image — does NOT assign it as base.
+        def _send_to_cohesion(picked):
+            if not picked:
+                raise gr.Error("Click a result in the strip first.")
+            return (picked, "Cohesion",
+                    gr.update(visible=False), gr.update(visible=True))
+        inp["send_to_cohesion"].click(
+            _send_to_cohesion, inputs=[inp["inpaint_picked"]],
+            outputs=[inp["cohesion_src"], inp["touchup_mode"],
+                     inp["inpaint_grp"], inp["cohesion_grp"]])
+
+        def _send_to_inpaint(picked):
+            if not picked:
+                raise gr.Error("Select a normalized result first.")
+            return (picked, "Inpaint",
+                    gr.update(visible=True), gr.update(visible=False))
+        inp["send_to_inpaint"].click(
+            _send_to_inpaint, inputs=[inp["cohesion_picked"]],
+            outputs=[inp["editor"], inp["touchup_mode"],
+                     inp["inpaint_grp"], inp["cohesion_grp"]])
+
+        # -- Cohesion mode: gentle img2img normalize using the character prompt --
+        def _normalize(state, model, src, pos, neg, focus, cfg, steps,
+                       progress=gr.Progress()):
+            if not src:
+                raise gr.Error("No base image to normalize (set a base on step ②).")
+            backend, ident = discovery.parse_model_value(model)
+            if backend != "sd":
+                raise gr.Error("Cohesion needs an SDXL/Pony/Illustrious model selected.")
+            from PIL import Image
+            w, h = Image.open(src).size
+            prompt = (pos or "").strip()
+            if focus and focus.strip():
+                prompt = (prompt + ", " + focus.strip()).strip(" ,")
+            gen_sd.release_inpaint()
+            self._release_faceswap()
+            if not self.acquire_gpu(state):
+                return gr.update()
+            try:
+                outs = gen_sd.generate_img2img(
+                    ident, src, prompt, neg or "", int(w), int(h),
+                    int(steps), float(cfg), -1, denoise=0.4, batch_size=4)
+                return outs or gr.update()
+            finally:
+                self.release_gpu(state)
+
+        inp["normalize_btn"].click(
+            _normalize,
+            inputs=[self.state, s["model"], inp["cohesion_src"], base["pos"], base["neg"],
+                    inp["cohesion_focus"], inp["cohesion_cfg"], inp["cohesion_steps"]],
+            outputs=[inp["cohesion_gallery"]])
+
+        def _pick_cohesion(evt: gr.SelectData):
+            return evt.value.get("image", {}).get("path") if isinstance(evt.value, dict) \
+                else evt.value
+        inp["cohesion_gallery"].select(_pick_cohesion, outputs=[inp["cohesion_picked"]])
+        inp["use_cohesion"].click(lambda p: p or gr.update(),
+                                  inputs=[inp["cohesion_picked"]],
+                                  outputs=[base["selected_base"]])
 
         # -- step 6: pose variants (+ mandatory base-face swap) --
         def _gen_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,

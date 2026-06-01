@@ -18,7 +18,7 @@ STEPS = [
     ("setup", "① Setup"),
     ("base", "② Baseline"),
     ("swap", "③ Face / Body"),
-    ("inpaint", "④ Inpaint"),
+    ("inpaint", "④ Touch Up"),
     ("poses", "⑤ Poses"),
     ("save", "⑥ Save"),
     ("train", "⑦ Train"),
@@ -122,12 +122,14 @@ def build_base(visible: bool, init=None):
 def build_swap(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ③ Face / Body Swap")
+        gr.Markdown("*This step is completely optional.*")
         c = {}
         with gr.Row():
             with gr.Column(scale=1):
                 c["base_preview"] = gr.Image(label="Current base", type="filepath",
                                              height=560, interactive=False,
-                                             show_fullscreen_button=True)
+                                             show_fullscreen_button=True,
+                                             value=_init_img(init, "base.selected_base"))
                 c["ab_btn"] = gr.Button("🔍 A/B compare (full screen + zoom)",
                                         scale=0, min_width=200)
                 c["result"] = gr.Image(label="Swap result (preview — Accept to make it the base)",
@@ -172,6 +174,8 @@ def build_swap(visible: bool, init=None):
                     c["run_body"] = gr.Button("Run body swap", variant="primary")
                     c["retry_body"] = gr.Button("↻ Retry", interactive=False)
                     c["accept_body"] = gr.Button("✓ Accept → base", variant="primary", interactive=False)
+                # Shown only while a body swap is running; cancels it mid-generation.
+                c["abort_body"] = gr.Button("⛔ Abort body swap", variant="stop", visible=False)
         # A/B comparison overlay — base vs swapped, side by side, each zoomable full screen.
         with gr.Row(visible=False) as ab_row:
             with gr.Column():
@@ -193,30 +197,76 @@ def build_swap(visible: bool, init=None):
 
 
 def build_inpaint(visible: bool, init=None):
+    base_img = _init_img(init, "base.selected_base")
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
-        gr.Markdown("### ④ Inpaint / Touch-ups")
-        gr.Markdown("<sub>Optional final fixes on the base before posing. Load the base, "
-                    "paint over the area to redo, describe the fix, Run, then Use as Base. "
-                    "(SDXL/Pony/Illustrious models.)</sub>")
+        gr.Markdown("### ④ Touch Up")
+        gr.Markdown("*This step is completely optional.*")
         c = {}
+        c["touchup_mode"] = gr.Radio(["Inpaint", "Cohesion"], value="Inpaint",
+                                     label="Mode", show_label=False)
+        # --- Inpaint mode: paint a mask on the base, prompt-driven inpaint ----
+        with gr.Group(visible=True) as inpaint_grp:
+            with gr.Row(equal_height=True):
+                with gr.Column(scale=1):
+                    c["editor"] = gr.ImageEditor(label="Paint the area to fix", type="numpy",
+                                                 height=720, layers=False, eraser=True,
+                                                 transforms=[], value=base_img,
+                                                 brush=gr.Brush(colors=["#ffffff"],
+                                                                color_mode="fixed"))
+                with gr.Column(scale=1, elem_id="replicant-inpaint-opts"):
+                    c["load_base"] = gr.Button("⬆ Reload current base into canvas")
+                    c["inpaint_prompt"] = gr.Textbox(label="Positive prompt", lines=3)
+                    c["inpaint_neg"] = gr.Textbox(label="Negative prompt", lines=2)
+                    c["inpaint_denoise"] = gr.Slider(0.2, 1.0, value=0.75, step=0.05,
+                                                     label="Denoise")
+                    c["inpaint_mask_blur"] = gr.Slider(0, 64, value=4, step=1,
+                                                       label="Mask blur (px)")
+                    c["inpaint_fill"] = gr.Radio(
+                        ["fill", "original", "latent noise", "latent nothing"],
+                        value="original", label="Masked content")
+                    c["inpaint_full_res"] = gr.Checkbox(value=False,
+                        label="Inpaint at full resolution (masked region only)")
+                    c["inpaint_padding"] = gr.Slider(0, 256, value=32, step=4,
+                        label="Full-res padding (px)")
+                    gr.Markdown("<sub>Adjust additional settings in **Generation Settings** "
+                                "above. Size is locked to portrait.</sub>")
+                    c["run_inpaint"] = gr.Button("Run inpaint", variant="primary")
+        c["inpaint_grp"] = inpaint_grp
+        # Output viewer: scrolls horizontally, tall enough for a full portrait.
         with gr.Row():
-            c["load_base"] = gr.Button("⬆ Load current base into editor")
-        with gr.Row():
-            with gr.Column(scale=1):
-                c["editor"] = gr.ImageEditor(label="Paint the area to fix", type="numpy",
-                                             height=560, layers=False, eraser=True,
-                                             transforms=[],
-                                             brush=gr.Brush(colors=["#ffffff"],
-                                                            color_mode="fixed"))
-            with gr.Column(scale=1):
-                c["inpaint_result"] = gr.Image(label="Result", type="filepath", height=560,
-                                               interactive=False, show_fullscreen_button=True)
-        c["inpaint_prompt"] = gr.Textbox(label="What to put there (prompt)", lines=2)
-        c["inpaint_neg"] = gr.Textbox(label="Negative", lines=1)
-        with gr.Row():
-            c["inpaint_denoise"] = gr.Slider(0.2, 1.0, value=0.75, step=0.05, label="Denoise")
-            c["run_inpaint"] = gr.Button("Run inpaint", variant="primary")
-            c["use_inpaint"] = gr.Button("✓ Use as Base", variant="primary")
+            with gr.Column(scale=6):
+                c["inpaint_gallery"] = gr.Gallery(label="Results", height=640, columns=20,
+                    rows=1, object_fit="contain", show_fullscreen_button=True,
+                    elem_id="replicant-inpaint-out")
+            with gr.Column(scale=1, min_width=160):
+                c["use_inpaint"] = gr.Button("✓ Use as Base", variant="primary")
+                c["send_to_cohesion"] = gr.Button("→ Send to Cohesion")
+                c["revert_inpaint"] = gr.Button("↩ Revert")
+        c["inpaint_picked"] = gr.State(None)
+        c["inpaint_prev_base"] = gr.State(None)  # for Revert
+        # --- Cohesion mode: gentle img2img normalize pass ---------------------
+        with gr.Group(visible=False) as cohesion_grp:
+            with gr.Row():
+                with gr.Column(scale=1):
+                    c["cohesion_src"] = gr.Image(label="Source (current base)",
+                                                 type="filepath", height=460,
+                                                 interactive=False,
+                                                 show_fullscreen_button=True, value=base_img)
+                    c["cohesion_cfg"] = gr.Slider(0.15, 0.30, value=0.22, step=0.01,
+                                                  label="CFG (override)")
+                    c["cohesion_steps"] = gr.Slider(5, 15, value=10, step=1,
+                                                    label="Steps (override)")
+                    c["cohesion_focus"] = gr.Textbox(label="Focus", lines=1,
+                        placeholder="e.g. white background, even lighting")
+                    c["normalize_btn"] = gr.Button("Normalize", variant="primary")
+                with gr.Column(scale=1):
+                    c["cohesion_gallery"] = gr.Gallery(label="Normalized (max 4) — click "
+                        "to select, then Use as Base", columns=2, rows=2, height=560,
+                        object_fit="contain", show_fullscreen_button=True)
+                    c["use_cohesion"] = gr.Button("✓ Use selected as Base", variant="primary")
+                    c["send_to_inpaint"] = gr.Button("→ Send to Inpaint")
+            c["cohesion_picked"] = gr.State(None)
+        c["cohesion_grp"] = cohesion_grp
     return g, c
 
 
