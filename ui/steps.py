@@ -193,6 +193,11 @@ def build_swap(visible: bool, init=None):
 
 def build_inpaint(visible: bool, init=None, lora_choices=None):
     base_img = _init_img(init, "base.selected_base")
+    _i = init or {}
+    # Cohesion prompts default to the main Setup prompts, but a persisted cohesion
+    # value (key present, even if cleared to "") takes precedence.
+    cohesion_pos = _i.get("inpaint.cohesion_prompt", _i.get("setup.positive_prompt", ""))
+    cohesion_neg = _i.get("inpaint.cohesion_neg", _i.get("setup.negative_prompt", ""))
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ④ Touch Up")
         gr.Markdown("*This step is completely optional.*")
@@ -254,8 +259,10 @@ def build_inpaint(visible: bool, init=None, lora_choices=None):
                                                  type="filepath", height=420,
                                                  interactive=False,
                                                  show_fullscreen_button=True, value=base_img)
-                    c["cohesion_prompt"] = gr.Textbox(label="Positive prompt", lines=2)
-                    c["cohesion_neg"] = gr.Textbox(label="Negative prompt", lines=1)
+                    c["cohesion_prompt"] = gr.Textbox(label="Positive prompt", lines=2,
+                                                      value=cohesion_pos)
+                    c["cohesion_neg"] = gr.Textbox(label="Negative prompt", lines=1,
+                                                   value=cohesion_neg)
                     with gr.Row():
                         c["cohesion_enhance_pos"] = gr.Button("✨ Enhance positive")
                         c["cohesion_enhance_neg"] = gr.Button("✨ Enhance negative")
