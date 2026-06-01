@@ -101,16 +101,19 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
     back_btn.click(lambda s: _nav(s, -1), inputs=[step], outputs=nav_outputs)
     next_btn.click(lambda s: _nav(s, +1), inputs=[step], outputs=nav_outputs)
 
-    # A reference seeds the base (so skipping passes it through) + shows in step 3's
-    # avatar. Restored via the constructor elsewhere; here on user upload/change.
+    # A reference seeds the initial base + shows in step 3's avatar, and enables the
+    # "Revert to Reference" button. (Generation never changes the base.)
     base_sel = comps["base"]["selected_base"]
     ref_avatar = comps["base"].get("ref_avatar")
+    revert_ref = comps["base"].get("revert_ref")
 
     def _ref_changed(ref):
-        return (ref if ref else gr.update()), (ref or None)
+        return (ref if ref else gr.update()), (ref or None), gr.update(interactive=bool(ref))
 
     reference.change(_ref_changed, inputs=[reference],
-                     outputs=[base_sel, ref_avatar])
+                     outputs=[base_sel, ref_avatar, revert_ref])
+    if revert_ref is not None:
+        revert_ref.click(lambda ref: ref or gr.update(), inputs=[reference], outputs=[base_sel])
 
     # Keep the Face/Body preview mirroring the current base (ref / gen / swap result).
     base_sel.change(lambda p: p or gr.update(), inputs=[base_sel],

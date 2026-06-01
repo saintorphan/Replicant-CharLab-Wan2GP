@@ -116,14 +116,20 @@ def build_base(visible: bool, init=None):
             with gr.Column(scale=2):
                 # Tall enough for two full rows of portrait candidates (3 cols);
                 # scrolls when there are more.
-                c["candidates"] = gr.Gallery(label="Candidates — click to select",
+                c["candidates"] = gr.Gallery(label="Candidates — click to select one",
                                              columns=3, rows=2, height=720,
                                              object_fit="contain", show_fullscreen_button=True,
                                              value=_init_gallery(init, "base.candidates"))
+                c["use_as_base"] = gr.Button("⬇ Use selected candidate as Base",
+                                             variant="primary")
             with gr.Column(scale=1):
-                c["selected_base"] = gr.Image(label="Selected base", type="filepath",
-                                              height=420, show_fullscreen_button=True,
+                c["selected_base"] = gr.Image(label="Base (changes only via the buttons)",
+                                              type="filepath", height=560,
+                                              interactive=False, show_fullscreen_button=True,
                                               value=_init_img(init, "base.selected_base"))
+                c["revert_ref"] = gr.Button("↩ Revert to Reference",
+                                            interactive=bool(_init_img(init, "info.reference_image")))
+        c["picked"] = gr.State(None)  # clicked candidate path (no base change until a button)
     return g, c
 
 

@@ -197,17 +197,22 @@ class ReplicantCharLab(WAN2GPPlugin):
                 raise gr.Error("Generation produced no images.")
             return files, files[0]
 
+        # Generation populates candidates + the pick pointer ONLY — the base never
+        # changes automatically; it's committed via "Use as Base" / "Revert".
         base["generate"].click(
             _gen_base,
             inputs=[self.state] + SET + [base["pos"], base["neg"], base["count"]],
-            outputs=[base["candidates"], base["selected_base"]])
+            outputs=[base["candidates"], base["picked"]])
 
         def _pick(evt: gr.SelectData):
             v = evt.value
             if isinstance(v, dict):
                 return v.get("image", {}).get("path") or v.get("path") or gr.update()
             return v if isinstance(v, str) else gr.update()
-        base["candidates"].select(_pick, outputs=[base["selected_base"]])
+        # Clicking a candidate only records the selection (no base change, no reflow).
+        base["candidates"].select(_pick, outputs=[base["picked"]])
+        base["use_as_base"].click(lambda p: p or gr.update(), inputs=[base["picked"]],
+                                  outputs=[base["selected_base"]])
 
         # Reimagine the reference (img2img) — SD-family only.
         def _reimagine(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
@@ -242,7 +247,7 @@ class ReplicantCharLab(WAN2GPPlugin):
             _reimagine,
             inputs=[self.state] + SET + [base["pos"], base["neg"],
                                          base["denoise"], base["count"], base["ref_avatar"]],
-            outputs=[base["candidates"], base["selected_base"]])
+            outputs=[base["candidates"], base["picked"]])
 
         # -- step 4: face swap onto the base (optional) --
         # --- Swap review flow: run -> preview, then Retry or Accept (commit to base).
