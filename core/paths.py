@@ -64,14 +64,15 @@ def set_dirs(*, characters=None, datasets=None, models=None,
     ensure_dirs()
 
 
-def sdxl_models_dir() -> str:
-    """Optional external dir of SDXL/Pony/Illustrious checkpoints ('' if unset)."""
-    return load_config().get("sdxl_models_dir", "")
+def sdxl_models_dir() -> Path:
+    """Dedicated dir for SDXL/Pony/Illustrious checkpoints (Wan2GP has none of its
+    own). Defaults under the lab root; created by ensure_dirs."""
+    return _dir("sdxl_models_dir", "sdxl_models")
 
 
-def sdxl_loras_dir() -> str:
-    """Optional external dir of SDXL-family LoRAs ('' if unset)."""
-    return load_config().get("sdxl_loras_dir", "")
+def sdxl_loras_dir() -> Path:
+    """Dedicated dir for SDXL-family LoRAs. Defaults under the lab root."""
+    return _dir("sdxl_loras_dir", "sdxl_loras")
 
 
 # --- roots -----------------------------------------------------------------
@@ -119,7 +120,8 @@ def character_dataset_dir(name: str) -> Path:
 
 def ensure_dirs() -> Path:
     """Create the directory tree if missing. Idempotent; called on plugin setup."""
-    for d in (characters_dir(), datasets_dir(), models_dir(), cache_dir()):
+    for d in (characters_dir(), datasets_dir(), models_dir(), cache_dir(),
+              sdxl_models_dir(), sdxl_loras_dir()):
         try:
             d.mkdir(parents=True, exist_ok=True)
         except Exception:
