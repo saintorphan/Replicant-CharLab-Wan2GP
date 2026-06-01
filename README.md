@@ -8,9 +8,9 @@ A [Wan2GP](https://github.com/deepbeepmeep/Wan2GP) plugin that ports the **chara
 
 Guides you through creating a reusable character — from name + description to a trained LoRA — as a single branded tab inside Wan2GP. Seven steps:
 
-1. **Info** — name, description, style, reference image
+1. **Info** — name, description, style, reference image (optional)
 2. **Prompt** — positive/negative prompt generation (abliterated Qwen3.5 enhancer)
-3. **Base Gen** — generate candidate base images, pick one
+3. **Base Gen** — if reference image is not supplied, generate candidate base images, pick one — otherwise skip to #4
 4. **Face / Body Swap** — optional identity locking
 5. **Poses** — generate + approve pose variants
 6. **Save** — write the character + build LoRA datasets
