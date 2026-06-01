@@ -146,10 +146,14 @@ def build_swap(visible: bool, init=None):
                                             show_fullscreen_button=True,
                                             value=_init_img(init, "swap.face_source"))
                 with gr.Row():
-                    c["face_enhancer"] = gr.Radio(["", "gfpgan", "codeformer"], value="",
-                                                  label="Enhancer")
+                    c["face_enhancer"] = gr.Radio(["", "gfpgan", "codeformer", "adetailer"],
+                                                  value="", label="Enhancer")
                     c["face_enhancer_strength"] = gr.Slider(0.0, 1.0, value=0.5, label="Strength")
                 c["face_blend_ratio"] = gr.Slider(0.0, 1.0, value=0.5, label="Enhancer blend")
+                with gr.Row(visible=False) as face_adet_row:  # only when Enhancer = adetailer
+                    c["face_adet_pos"] = gr.Textbox(label="ADetailer positive", lines=1, scale=1)
+                    c["face_adet_neg"] = gr.Textbox(label="ADetailer negative", lines=1, scale=1)
+                c["face_adet_row"] = face_adet_row
                 with gr.Row():
                     c["run_face"] = gr.Button("Run face swap", variant="primary")
                     c["retry_face"] = gr.Button("↻ Retry", interactive=False)
@@ -165,6 +169,10 @@ def build_swap(visible: bool, init=None):
                     c["body_cfg"] = gr.Slider(1.0, 15.0, value=7.0, step=0.5, label="CFG")
                     c["body_cn_strength"] = gr.Slider(0.0, 1.0, value=0.7, label="ControlNet")
                 c["adetailer"] = gr.Checkbox(value=True, label="ADetailer (face restore on body-swap result)")
+                with gr.Row(visible=True) as body_adet_row:  # toggled by the checkbox
+                    c["body_adet_pos"] = gr.Textbox(label="ADetailer positive", lines=1, scale=1)
+                    c["body_adet_neg"] = gr.Textbox(label="ADetailer negative", lines=1, scale=1)
+                c["body_adet_row"] = body_adet_row
                 with gr.Row():
                     c["run_body"] = gr.Button("Run body swap", variant="primary")
                     c["retry_body"] = gr.Button("↻ Retry", interactive=False)

@@ -278,29 +278,43 @@ class ReplicantCharLab(WAN2GPPlugin):
                         gr.update(interactive=False), gr.update(interactive=False)]
             return ups
 
-        def _run_face(state, target_base, face_src, enhancer, strength, blend):
+        def _run_face(state, model, target_base, face_src, enhancer, strength, blend,
+                      adet_pos, adet_neg):
             if not target_base:
                 raise gr.Error("Generate/select a base image first (step 3).")
             if not face_src:
                 raise gr.Error("Provide a face source image.")
             self._require(["inswapper_128", "buffalo_l"], "Face swap")
+            use_adet = (enhancer == "adetailer")
+            if use_adet:
+                backend, ident = discovery.parse_model_value(model)
+                if backend != "sd":
+                    raise gr.Error("ADetailer needs an SDXL/Pony/Illustrious model selected.")
+                self._require(models.BODY_SWAP_KEYS, "ADetailer")
             gen_sd.release_sd()
             if not self.acquire_gpu(state):
                 raise gr.Error("GPU is busy.")
             try:
                 import time
+                # adetailer isn't a face-restore model — run a clean swap, then refine.
                 img = self._face_pipe().swap(
                     source_path=face_src, target_path=target_base,
-                    enhancer=enhancer or None, blend_ratio=float(blend),
-                    enhancer_strength=float(strength))
+                    enhancer=None if use_adet else (enhancer or None),
+                    blend_ratio=float(blend), enhancer_strength=float(strength))
                 out = paths.cache_dir() / "swap"; out.mkdir(parents=True, exist_ok=True)
                 p = out / f"face_{int(time.time())}.png"; img.save(p)
+                res = str(p)
+                if use_adet:
+                    self._release_faceswap()
+                    res = gen_sd.run_adetailer(ident, res, adet_pos, adet_neg,
+                                               "DPM++ 2M", "Karras")
             finally:
                 self.release_gpu(state)
-            return [str(p)] + _lockset("face")
+            return [res] + _lockset("face")
 
-        face_in = [self.state, base["selected_base"], swap["face_source"],
-                   swap["face_enhancer"], swap["face_enhancer_strength"], swap["face_blend_ratio"]]
+        face_in = [self.state, s["model"], base["selected_base"], swap["face_source"],
+                   swap["face_enhancer"], swap["face_enhancer_strength"], swap["face_blend_ratio"],
+                   swap["face_adet_pos"], swap["face_adet_neg"]]
 
         def _face_click(mode, *args):
             if mode == "review":  # Run button is showing Discard → drop the attempt
@@ -317,7 +331,7 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         def _run_body(state, model, sel_base, body_src, ip_scale, denoise, body_cfg,
                       cn_strength, steps, seed, sampler, scheduler, pos, neg, adet,
-                      progress=gr.Progress()):
+                      adet_pos, adet_neg, progress=gr.Progress()):
             if not sel_base:
                 raise gr.Error("Generate/select a base image first (step 3).")
             if not body_src:
@@ -336,7 +350,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                     cn_strength=float(cn_strength), ip_scale=float(ip_scale),
                     denoise=float(denoise), cfg=float(body_cfg), steps=int(steps),
                     seed=int(seed), sampler=sampler, scheduler=scheduler,
-                    adetailer=bool(adet), progress=progress)
+                    adetailer=bool(adet), adet_prompt=adet_pos, adet_neg=adet_neg,
+                    progress=progress)
             finally:
                 self.release_gpu(state)
             if not out:
@@ -346,7 +361,8 @@ class ReplicantCharLab(WAN2GPPlugin):
         body_in = [self.state, s["model"], base["selected_base"], swap["body_source"],
                    swap["body_ip_scale"], swap["body_denoise"], swap["body_cfg"],
                    swap["body_cn_strength"], s["steps"], s["seed"], s["sampler"],
-                   s["scheduler"], base["pos"], base["neg"], swap["adetailer"]]
+                   s["scheduler"], base["pos"], base["neg"], swap["adetailer"],
+                   swap["body_adet_pos"], swap["body_adet_neg"]]
         def _body_click(mode, *args, progress=gr.Progress()):
             if mode == "review":  # Run button is showing Discard → drop the attempt
                 return [None, "idle"] + _lockset(None)
@@ -359,6 +375,15 @@ class ReplicantCharLab(WAN2GPPlugin):
         swap["accept_body"].click(lambda res: [res or gr.update(), "idle"] + _lockset(None),
                                   inputs=[swap["result"]],
                                   outputs=[base["selected_base"], swap["body_mode"]] + LOCK)
+
+        # ADetailer prompt rows: face row shows only when Enhancer == adetailer;
+        # body row follows its ADetailer checkbox.
+        swap["face_enhancer"].change(
+            lambda v: gr.update(visible=(v == "adetailer")),
+            inputs=[swap["face_enhancer"]], outputs=[swap["face_adet_row"]])
+        swap["adetailer"].change(
+            lambda v: gr.update(visible=bool(v)),
+            inputs=[swap["adetailer"]], outputs=[swap["body_adet_row"]])
 
         # A/B compare: base vs swapped, side by side, each full-screen + zoomable.
         def _ab(base_img, result_img):

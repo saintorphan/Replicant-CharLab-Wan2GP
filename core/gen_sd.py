@@ -331,13 +331,44 @@ def ip_adapter_inpaint(checkpoint_path, target_path, reference_path, mask_image,
         return None
 
 
+def run_adetailer(checkpoint_path, image_path, prompt, negative, sampler, scheduler,
+                  steps=30, cfg=7.0, clip_skip=1, out_dir=None) -> str | None:
+    """Detect faces in ``image_path`` and re-inpaint each at higher detail using the
+    given prompts. Returns the refined image path (or the original on no-op/failure)."""
+    import time
+    from PIL import Image
+    from supremediffusion.models.adetailer import ADetailerProcessor
+    models_root = str(Path(SD_CHECKOUT) / "models")
+    release_inpaint()  # free the diffusers IP-Adapter inpaint pipe first
+    pipe = get_pipeline()
+    with models.no_auto_download():
+        pipe.load(checkpoint_path)
+        proc = ADetailerProcessor(models_root)
+        refined = proc.process(
+            Image.open(image_path).convert("RGB"), sd_pipeline=pipe,
+            base_prompt=prompt or "", base_neg_prompt=negative or "",
+            base_steps=int(steps), base_cfg=float(cfg), sampler=sampler,
+            scheduler=scheduler, clip_skip=int(clip_skip),
+            prompt_override=prompt or "", neg_prompt_override=negative or "")
+    out = Path(out_dir) if out_dir else (paths.cache_dir() / "swap")
+    out.mkdir(parents=True, exist_ok=True)
+    f = out / f"adetail_{int(time.time())}.png"
+    try:
+        refined.save(f)
+        return str(f)
+    except Exception:
+        logger.warning("failed saving ADetailer result", exc_info=True)
+        return image_path
+
+
 def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
               cn_strength=0.7, ip_scale=0.8, denoise=0.75, cfg=7.0, steps=30,
               seed=-1, sampler="DPM++ 3M SDE", scheduler="Karras",
-              adetailer=True, progress=None) -> str | None:
+              adetailer=True, adet_prompt="", adet_neg="", progress=None) -> str | None:
     """Transfer the source person's skin tone / body texture onto the base's body
     (whole head excluded → face + hair preserved). No pose copy, no ControlNet —
-    an IP-Adapter masked inpaint. SD-family checkpoints only."""
+    an IP-Adapter masked inpaint. SD-family checkpoints only. With ``adetailer``,
+    a final face-detail pass runs (using ``adet_prompt``/``adet_neg`` if given)."""
     def _say(frac, msg):
         if progress is not None:
             try:
@@ -350,7 +381,17 @@ def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
     _say(0.2, "Segmenting body (head excluded)…")
     mask = head_excluded_body_mask(base_path, models_root)
     _say(0.55, "Applying source skin/texture (IP-Adapter inpaint)…")
-    return ip_adapter_inpaint(checkpoint_path, base_path, source_person_path, mask,
-                              prompt, negative, denoise=float(denoise),
-                              ip_scale=float(ip_scale), steps=int(steps),
-                              cfg=float(cfg), seed=int(seed), progress=progress)
+    res = ip_adapter_inpaint(checkpoint_path, base_path, source_person_path, mask,
+                             prompt, negative, denoise=float(denoise),
+                             ip_scale=float(ip_scale), steps=int(steps),
+                             cfg=float(cfg), seed=int(seed), progress=progress)
+    if adetailer and res:
+        _say(0.9, "ADetailer face refine…")
+        try:
+            return run_adetailer(checkpoint_path, res,
+                                 adet_prompt or prompt, adet_neg or negative,
+                                 sampler, scheduler, steps=int(steps), cfg=float(cfg))
+        except Exception:
+            logger.warning("ADetailer pass failed; returning un-refined body swap",
+                           exc_info=True)
+    return res
