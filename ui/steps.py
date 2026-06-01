@@ -96,12 +96,8 @@ def build_base(visible: bool, init=None):
                 c["generate"] = gr.Button("Generate candidates (txt2img)", variant="primary")
                 gr.Markdown("**Reimagine (img2img)** — re-render the reference (SD models). "
                             "Skip both and the reference passes through as the base.")
-                with gr.Row():
-                    c["ref_avatar"] = gr.Image(label="Reference", type="filepath", height=160,
-                                               interactive=False, show_fullscreen_button=True,
-                                               value=_init_img(init, "setup.reference_image"))
-                    c["denoise"] = gr.Slider(0.2, 1.0, value=0.6, step=0.05,
-                                             label="Reimagine denoise")
+                c["denoise"] = gr.Slider(0.2, 1.0, value=0.6, step=0.05,
+                                         label="Reimagine denoise")
                 c["reimagine"] = gr.Button("Reimagine reference (img2img)")
         with gr.Row():
             with gr.Column(scale=2):
@@ -120,6 +116,9 @@ def build_base(visible: bool, init=None):
                                               value=_init_img(init, "base.selected_base"))
                 c["revert_ref"] = gr.Button("↩ Revert to Reference",
                                             interactive=bool(_init_img(init, "setup.reference_image")))
+                c["ref_avatar"] = gr.Image(label="Reference", type="filepath", height=200,
+                                           interactive=False, show_fullscreen_button=True,
+                                           value=_init_img(init, "setup.reference_image"))
         c["picked"] = gr.State(None)  # clicked candidate path (no base change until a button)
     return g, c
 
