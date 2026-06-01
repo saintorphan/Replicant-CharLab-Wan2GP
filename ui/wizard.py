@@ -48,7 +48,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
             gr.HTML('<div class="replicant-taglines">'
                     '<div class="replicant-tagline">Transform a single prompt into a '
                     'character<br>LoRA for image and video!</div>'
-                    '<div class="replicant-tagline">Wan, LTX, Z-Image, Flux,<br>'
+                    '<div class="replicant-tagline">Supports Wan, LTX, Z-Image, Flux,<br>'
                     'SDXL, Pony, and Illustrious!</div>'
                     '</div>')
         with gr.Column(scale=10):
