@@ -20,8 +20,7 @@ STEPS = [
     ("swap", "③ Face / Body"),
     ("inpaint", "④ Touch Up"),
     ("poses", "⑤ Poses"),
-    ("save", "⑥ Save"),
-    ("train", "⑦ Train"),
+    ("train", "⑥ Train"),
 ]
 
 STYLES = ["realism", "anime", "cartoon"]
@@ -285,25 +284,18 @@ def build_poses(visible: bool, init=None):
     return g, c
 
 
-def build_save(visible: bool, init=None):
-    with gr.Group(visible=visible, elem_classes="replicant-step") as g:
-        gr.Markdown("### ⑥ Save Character")
-        gr.Markdown("<sub>Use **Save Character** in the header (top-right) to save at any "
-                    "time. Saving with approved poses also builds the LoRA datasets.</sub>")
-        c = {}
-        c["summary"] = gr.Markdown("_Fill in the earlier steps; the save summary "
-                                   "appears here._")
-        c["save_status"] = gr.Markdown()
-    return g, c
-
-
 def build_train(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
-        gr.Markdown("### ⑦ Train LoRA")
-        gr.Markdown("<sub>Low-VRAM preset is auto-selected from your Wan2GP profile "
-                    "(override below). The generation model is unloaded first to "
-                    "free VRAM for training.</sub>")
+        gr.Markdown("### ⑥ Datasets & Training")
+        gr.Markdown("<sub>**Save Character** (header) saves the character and builds the "
+                    "LoRA datasets. Then train: the low-VRAM preset is auto-selected from "
+                    "your Wan2GP profile (override below) and the generation model is "
+                    "unloaded first to free VRAM.</sub>")
         c = {}
+        # Save / dataset summary (relocated here from the old Save page).
+        c["summary"] = gr.Markdown("_Fill in the earlier steps, then **Save Character** "
+                                   "in the header; the save + dataset summary appears here._")
+        c["save_status"] = gr.Markdown()
         with gr.Row():
             c["dataset"] = gr.Radio(["video512", "highres", "full", "face"],
                                     value="video512", label="Dataset")
@@ -318,4 +310,4 @@ def build_train(visible: bool, init=None):
 
 
 BUILDERS = [build_setup, build_base, build_swap, build_inpaint,
-            build_poses, build_save, build_train]
+            build_poses, build_train]

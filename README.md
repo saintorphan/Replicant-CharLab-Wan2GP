@@ -1,20 +1,25 @@
 # Replicant Character Lab — Wan2GP Plugin
 
+> # ⚠️ THIS IS NOT READY YET. CLONE AT YOUR OWN RISK.
+>
+> Active, early development — incomplete, unstable, and changing constantly. Things will break.
+
 A [Wan2GP](https://github.com/deepbeepmeep/Wan2GP) plugin that ports the **character-creator wizard** from [SupremeDiffusion](https://github.com/saintorphan/SupremeDiffusion) into Wan2GP's Gradio UI.
 
 ![Replicant Character Lab](replicant.png)
 
 ## What it does
 
-Guides you through creating a reusable character — from name + description to a trained LoRA — as a single branded tab inside Wan2GP. Seven steps:
+Guides you through creating a reusable character — from name + description to a trained LoRA — as a single branded tab inside Wan2GP. Six steps:
 
-1. **Info** — name, description, style, reference image (optional)
-2. **Prompt** — positive/negative prompt generation (abliterated Qwen3.5 enhancer)
-3. **Base Gen** — if reference image is not supplied, generate candidate base images, pick one — otherwise skip to #4
-4. **Face / Body Swap** — optional identity locking
+1. **Setup** — name, description, style, reference image, and positive/negative prompt generation (abliterated Qwen3.5 enhancer)
+2. **Baseline** — generate candidate base images and pick one (or reimagine/skip a supplied reference)
+3. **Face / Body Swap** — optional identity locking
+4. **Touch Up** — optional inpaint + cohesion (img2img normalize) passes
 5. **Poses** — generate + approve pose variants
-6. **Save** — write the character + build LoRA datasets
-7. **Train** — train a character LoRA from the built datasets
+6. **Datasets & Training** — build the LoRA datasets and train the character LoRA
+
+Save/Load Character and Clear are session actions in the header (top-right), usable at any step.
 
 ## Install
 

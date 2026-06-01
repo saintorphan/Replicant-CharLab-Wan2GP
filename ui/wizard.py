@@ -59,12 +59,16 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
                     'Replicant-CharLab-Wan2GP</a></div>', elem_classes="replicant-ghwrap")
         with gr.Column(scale=3, min_width=240, elem_id="replicant-clearcol"):
             with gr.Row():
-                header_load_existing = gr.Dropdown(label="Load character",
-                                                   choices=paths.list_characters(), scale=4)
-                header_refresh_btn = gr.Button("⟳", scale=0, min_width=42)
-            with gr.Row():
                 header_load_btn = gr.Button("📂 Load", scale=1)
                 header_save_btn = gr.Button("💾 Save Character", variant="primary", scale=1)
+            # Load popup: pick from saved characters.
+            with gr.Group(visible=False) as load_popup:
+                gr.Markdown("**Load a saved character**")
+                header_load_existing = gr.Dropdown(label="Saved characters",
+                                                   choices=paths.list_characters())
+                with gr.Row():
+                    header_load_pick = gr.Button("Load", variant="primary")
+                    header_load_popup_cancel = gr.Button("Cancel")
             # Confirm: save current work before loading another character.
             with gr.Row(visible=False) as load_confirm_row:
                 gr.Markdown("**Save current character first?**")
@@ -112,13 +116,15 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
     # Load / Save / Clear are header session actions; expose them where the wiring looks.
     comps["setup"]["load_existing"] = header_load_existing
     comps["setup"]["load_btn"] = header_load_btn
-    comps["setup"]["refresh_btn"] = header_refresh_btn
+    comps["setup"]["load_popup"] = load_popup
+    comps["setup"]["load_pick"] = header_load_pick
+    comps["setup"]["load_popup_cancel"] = header_load_popup_cancel
     comps["setup"]["load_confirm_row"] = load_confirm_row
     comps["setup"]["load_confirm_btns"] = load_confirm_btns
     comps["setup"]["load_save_first"] = header_load_save_first
     comps["setup"]["load_discard"] = header_load_discard
     comps["setup"]["load_cancel"] = header_load_cancel
-    comps["save"]["save"] = header_save_btn
+    comps["train"]["save"] = header_save_btn  # summary/status live on Train now
     comps["setup"]["clear_btn"] = header_clear_btn
     comps["setup"]["clear_confirm_row"] = clear_confirm_row
     comps["setup"]["clear_confirm_btns"] = clear_confirm_btns
@@ -361,10 +367,7 @@ def _summary(cs, cdir) -> str:
 def _wire_load_save(comps, settings, poses_state):
     info, prm, base, swap = (comps["setup"], comps["setup"],
                              comps["base"], comps["swap"])
-    save = comps["save"]
-
-    info["refresh_btn"].click(lambda: gr.update(choices=paths.list_characters()),
-                              outputs=[info["load_existing"]])
+    save = comps["train"]  # summary + save_status live on the Train page now
 
     load_outputs = [info["name"], info["description"], info["style"],
                     prm["positive_prompt"], prm["negative_prompt"],
@@ -434,28 +437,37 @@ def _wire_load_save(comps, settings, poses_state):
     save["save"].click(_save, inputs=save_inputs,
                        outputs=[save["save_status"], save["summary"]])
 
-    # --- Load with a "save current first?" guard --------------------------------
+    # --- Load: button opens a popup picker; picking guards on unsaved work -------
+    popup = info["load_popup"]
     lcr, lcb = info["load_confirm_row"], info["load_confirm_btns"]
 
-    def _load_guard(sel, name, sbase):
+    # Open the popup (refreshing the saved-character list).
+    info["load_btn"].click(
+        lambda: (gr.update(visible=True), gr.update(choices=paths.list_characters())),
+        outputs=[popup, info["load_existing"]])
+    info["load_popup_cancel"].click(lambda: gr.update(visible=False), outputs=[popup])
+
+    def _pick(sel, name, sbase):
         if not sel:
             raise gr.Error("Pick a character to load first.")
-        if (name and name.strip()) or sbase:  # there's work on the canvas
-            return [gr.update(visible=True), gr.update(visible=True)] \
-                + [gr.update()] * len(load_outputs)
-        return [gr.update(visible=False), gr.update(visible=False)] + _load(sel)
+        if (name and name.strip()) or sbase:  # unsaved work — confirm save first
+            return ([gr.update(visible=False), gr.update(visible=True),
+                     gr.update(visible=True)] + [gr.update()] * len(load_outputs))
+        return ([gr.update(visible=False), gr.update(visible=False),
+                 gr.update(visible=False)] + _load(sel))
 
     def _do_load(sel):
-        return [gr.update(visible=False), gr.update(visible=False)] + _load(sel)
+        return ([gr.update(visible=False), gr.update(visible=False),
+                 gr.update(visible=False)] + _load(sel))
 
-    info["load_btn"].click(_load_guard,
-                           inputs=[info["load_existing"], info["name"],
-                                   base["selected_base"]],
-                           outputs=[lcr, lcb] + load_outputs)
+    info["load_pick"].click(_pick,
+                            inputs=[info["load_existing"], info["name"],
+                                    base["selected_base"]],
+                            outputs=[popup, lcr, lcb] + load_outputs)
     info["load_save_first"].click(
         _save, inputs=save_inputs, outputs=[save["save_status"], save["summary"]]).then(
-        _do_load, inputs=[info["load_existing"]], outputs=[lcr, lcb] + load_outputs)
+        _do_load, inputs=[info["load_existing"]], outputs=[popup, lcr, lcb] + load_outputs)
     info["load_discard"].click(_do_load, inputs=[info["load_existing"]],
-                               outputs=[lcr, lcb] + load_outputs)
+                               outputs=[popup, lcr, lcb] + load_outputs)
     info["load_cancel"].click(
         lambda: (gr.update(visible=False), gr.update(visible=False)), outputs=[lcr, lcb])
