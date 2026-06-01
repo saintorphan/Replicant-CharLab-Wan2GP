@@ -9,7 +9,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from ..core import character, datasets, paths, wizard_state
+from ..core import character, datasets, gen_sd, paths, wizard_state
 from .prereqs import build_prereqs
 from .settings_bar import build_settings_bar
 from .steps import BUILDERS, STEPS
@@ -254,8 +254,10 @@ def _wire_load_save(comps, settings, poses_state):
         if cs.approved_poses:
             try:
                 progress(0.5, desc="Building LoRA datasets…")
+                gen_sd.release_sd()  # free any resident SD model before crop detection
                 ddir = paths.character_dataset_dir(name)
                 datasets.build_character_datasets(ddir, cs)
+                gen_sd._free_torch()  # release the crop detector's VRAM afterward
                 msg += f" · datasets built at `{ddir}`"
             except Exception:
                 msg += " · ⚠️ dataset build failed (see console)"

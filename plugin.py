@@ -294,11 +294,14 @@ class ReplicantCharLab(WAN2GPPlugin):
             if not (pos and pos.strip()):
                 raise gr.Error("Need a positive prompt (step 2).")
             self._require(["inswapper_128", "buffalo_l"], "Pose generation (base-face swap)")
-            fp = self._face_pipe()
-            gallery, specs = [], []
             P = poses.POSES
+
+            # Pass 1 — generate every pose with ONLY the generator resident
+            # (face-swap models released first so the SD model has the whole GPU).
+            self._release_faceswap()
+            raw = []
             for i, ps in enumerate(P):
-                progress((i, len(P)), desc=f"Pose {i + 1}/{len(P)} ({ps.distance}/{ps.angle})")
+                progress((i, len(P)), desc=f"Generating pose {i + 1}/{len(P)} ({ps.distance}/{ps.angle})")
                 pw, ph = (max(width, height), min(width, height)) if ps.orientation == "landscape" \
                     else (min(width, height), max(width, height))
                 p_pos = f"{pos}, {ps.description}"
@@ -306,24 +309,37 @@ class ReplicantCharLab(WAN2GPPlugin):
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
                 imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps, cfg,
                                        sd, sampler, scheduler, clip_skip)
-                if not imgs:
+                raw.append((imgs[0] if imgs else None,
+                            {"distance": ps.distance, "angle": ps.angle,
+                             "orientation": ps.orientation}))
+
+            # Pass 2 — free the generator, then apply the base face to each pose
+            # (only the swap models resident now). Never both families at once.
+            gen_sd.release_sd()
+            fp = self._face_pipe()
+            out = paths.cache_dir() / "poses"
+            out.mkdir(parents=True, exist_ok=True)
+            gallery, specs = [], []
+            for i, (img, spec) in enumerate(raw):
+                if not img:
                     continue
-                final = imgs[0]
-                try:  # mandatory: apply base face to the pose for identity consistency
+                final = img
+                progress((i, len(raw)), desc=f"Applying base face {i + 1}/{len(raw)}")
+                try:
                     if self.acquire_gpu(state):
                         try:
-                            swapped = fp.swap(source_path=sel_base, target_path=imgs[0])
-                            out = paths.cache_dir() / "poses"; out.mkdir(parents=True, exist_ok=True)
-                            fp_path = out / f"pose_{i + 1:03d}.png"; swapped.save(fp_path)
+                            swapped = fp.swap(source_path=sel_base, target_path=img)
+                            fp_path = out / f"pose_{i + 1:03d}.png"
+                            swapped.save(fp_path)
                             final = str(fp_path)
                         finally:
                             self.release_gpu(state)
                 except Exception:
                     traceback.print_exc()
                 gallery.append(final)
-                specs.append({"distance": ps.distance, "angle": ps.angle,
-                              "orientation": ps.orientation})
-            self._release_faceswap()  # free InsightFace after the pose loop
+                specs.append(spec)
+
+            self._release_faceswap()  # leave the GPU clean for Save / Train
             if not gallery:
                 raise gr.Error("No poses were generated.")
             return gallery, {"poses": gallery, "specs": specs}
