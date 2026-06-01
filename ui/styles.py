@@ -2,7 +2,7 @@
 
 CSS = """
 #replicant-banner { text-align: center; margin: 4px 0 14px 0; }
-#replicant-banner img { width: 75%; max-width: 1185px; height: auto; display: inline-block; }
+#replicant-banner img { width: 56%; max-width: 890px; height: auto; display: inline-block; }
 
 #replicant-rail { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 #replicant-rail button {
