@@ -142,7 +142,8 @@ def build_swap(visible: bool, init=None):
             with gr.Column(scale=1):
                 gr.Markdown("### Face swap")
                 c["face_source"] = gr.Image(label="Face source", type="filepath", height=320,
-                                            show_fullscreen_button=True)
+                                            show_fullscreen_button=True,
+                                            value=_init_img(init, "swap.face_source"))
                 with gr.Row():
                     c["face_enhancer"] = gr.Radio(["", "gfpgan", "codeformer"], value="",
                                                   label="Enhancer")
@@ -151,7 +152,8 @@ def build_swap(visible: bool, init=None):
                 c["run_face"] = gr.Button("Apply face swap to base", variant="primary")
                 gr.Markdown("### Body swap  <sub>(SDXL/Pony/Illustrious)</sub>")
                 c["body_source"] = gr.Image(label="Body source", type="filepath", height=320,
-                                            show_fullscreen_button=True)
+                                            show_fullscreen_button=True,
+                                            value=_init_img(init, "swap.body_source"))
                 with gr.Row():
                     c["body_ip_scale"] = gr.Slider(0.0, 1.0, value=0.8, label="Identity")
                     c["body_denoise"] = gr.Slider(0.0, 1.0, value=0.75, label="Denoise")

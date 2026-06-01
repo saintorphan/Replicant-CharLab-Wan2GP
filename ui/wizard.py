@@ -141,7 +141,9 @@ _PERSIST_SPEC = {
 # via the component CONSTRUCTOR (post-hoc .value on a gr.Image breaks ImageData
 # validation when it's also an event input). Key -> (group, name).
 _IMAGE_FIELDS = [("info.reference_image", "info", "reference_image"),
-                 ("base.selected_base", "base", "selected_base")]
+                 ("base.selected_base", "base", "selected_base"),
+                 ("swap.face_source", "swap", "face_source"),
+                 ("swap.body_source", "swap", "body_source")]
 _GALLERY_FIELDS = [("base.candidates", "base", "candidates")]
 
 
