@@ -171,7 +171,7 @@ def download(key: str, progress=None) -> str:
 
 def _download_repo(spec, progress) -> str:
     from huggingface_hub import snapshot_download
-    if progress:
+    if progress is not None:
         try:
             progress(0.1, desc=f"Fetching {spec.name} ({spec.repo})…")
         except Exception:
