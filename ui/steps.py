@@ -73,10 +73,6 @@ def build_setup(visible: bool, init=None):
                                                 value=_init_img(init, "setup.reference_image"))
         gr.Markdown("<sub>All fields autosave; restored next launch. LoRAs are picked in "
                     "the Generation settings bar.</sub>")
-        with gr.Row():
-            c["clear_btn"] = gr.Button("🗑 Clear Wizard", variant="stop", scale=0, min_width=160)
-            c["clear_files"] = gr.Checkbox(value=False,
-                label="Delete all unsaved generations (candidates / base / reference / swaps / poses)")
     return g, c
 
 

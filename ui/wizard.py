@@ -42,7 +42,20 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
 
     Returns a dict with ``step``, ``groups``, ``rail``, ``nav``, ``components``,
     ``settings`` (shared gen-settings bar) and ``prereqs``."""
-    gr.HTML(_banner_html())
+    # Header: taglines (left) · banner (center) · Clear Wizard (right) -------
+    with gr.Row(elem_id="replicant-header"):
+        with gr.Column(scale=3):
+            gr.HTML('<div class="replicant-tagline">Create character LoRAs from a '
+                    'single image!</div>'
+                    '<div class="replicant-tagline">Actually, yes— we DO support '
+                    'SDXL!</div>')
+        with gr.Column(scale=4):
+            gr.HTML(_banner_html())
+        with gr.Column(scale=3, min_width=200):
+            header_clear_btn = gr.Button("🗑 Clear Wizard", variant="stop")
+            header_clear_files = gr.Checkbox(value=False,
+                label="Delete all unsaved generations (candidates / base / reference / "
+                      "swaps / poses)")
 
     # Prerequisites (directories + models) ----------------------------------
     prereqs = build_prereqs()
@@ -62,6 +75,9 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
         g, c = builder(visible=(i == 0), init=init)
         groups.append(g)
         comps[STEPS[i][0]] = c
+    # Clear Wizard now lives in the header; expose it where the wiring looks.
+    comps["setup"]["clear_btn"] = header_clear_btn
+    comps["setup"]["clear_files"] = header_clear_files
 
     # Nav -------------------------------------------------------------------
     with gr.Row(elem_id="replicant-nav"):

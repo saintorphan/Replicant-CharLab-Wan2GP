@@ -2,7 +2,12 @@
 
 CSS = """
 #replicant-banner { text-align: center; margin: 4px 0 14px 0; }
-#replicant-banner img { width: 56%; max-width: 890px; height: auto; display: inline-block; }
+#replicant-banner img { width: 100%; max-width: 640px; height: auto; display: inline-block; }
+
+#replicant-header { align-items: center; margin: 4px 0 14px 0; }
+#replicant-header #replicant-banner { margin: 0; }
+.replicant-tagline { font-size: 1.5em; font-weight: 700; line-height: 1.25;
+    margin: 2px 0; color: #ff5fa2; }
 
 #replicant-rail { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 #replicant-rail button {
