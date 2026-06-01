@@ -178,18 +178,23 @@ def inpaint(checkpoint_path, image_path, mask_image, prompt, negative, denoise=0
 # no pose copy, no sequential CPU offload.
 _inpaint_pipe = None
 _inpaint_ckpt = None
+_inpaint_with_ip = None
 
 
 def release_inpaint():
-    global _inpaint_pipe, _inpaint_ckpt
+    global _inpaint_pipe, _inpaint_ckpt, _inpaint_with_ip
     _inpaint_pipe = None
     _inpaint_ckpt = None
+    _inpaint_with_ip = None
     _free_torch()
 
 
-def _get_ip_inpaint(checkpoint_path):
-    global _inpaint_pipe, _inpaint_ckpt
-    if _inpaint_pipe is not None and _inpaint_ckpt == checkpoint_path:
+def _get_inpaint(checkpoint_path, with_ip=True):
+    """Cached diffusers SDXL inpaint pipeline. With ``with_ip`` it also loads the
+    IP-Adapter (for body swap); without it (ADetailer) it's a plain inpaint."""
+    global _inpaint_pipe, _inpaint_ckpt, _inpaint_with_ip
+    if (_inpaint_pipe is not None and _inpaint_ckpt == checkpoint_path
+            and _inpaint_with_ip == with_ip):
         return _inpaint_pipe
     release_inpaint()
     import torch
@@ -197,11 +202,12 @@ def _get_ip_inpaint(checkpoint_path):
     with models.no_auto_download():
         pipe = StableDiffusionXLInpaintPipeline.from_single_file(
             checkpoint_path, torch_dtype=torch.float16)
-        # The *_vit-h weights expect the ViT-H image encoder (1280-dim) at
-        # models/image_encoder — NOT the bigG encoder (1664) in sdxl_models/.
-        pipe.load_ip_adapter("h94/IP-Adapter", subfolder="sdxl_models",
-                             weight_name="ip-adapter-plus_sdxl_vit-h.safetensors",
-                             image_encoder_folder="models/image_encoder")
+        if with_ip:
+            # The *_vit-h weights expect the ViT-H image encoder (1280-dim) at
+            # models/image_encoder — NOT the bigG encoder (1664) in sdxl_models/.
+            pipe.load_ip_adapter("h94/IP-Adapter", subfolder="sdxl_models",
+                                 weight_name="ip-adapter-plus_sdxl_vit-h.safetensors",
+                                 image_encoder_folder="models/image_encoder")
     # 12 GB-class cards can't hold the full SDXL inpaint + IP-Adapter (UNet + 2 text
     # encoders + image encoder + VAE) resident. Model CPU offload keeps only the
     # active submodule on GPU (per-module, not the slow per-layer sequential variant),
@@ -220,7 +226,7 @@ def _get_ip_inpaint(checkpoint_path):
         pipe.vae.enable_tiling()
     except Exception:
         pass
-    _inpaint_pipe, _inpaint_ckpt = pipe, checkpoint_path
+    _inpaint_pipe, _inpaint_ckpt, _inpaint_with_ip = pipe, checkpoint_path, with_ip
     return pipe
 
 
@@ -314,7 +320,7 @@ def ip_adapter_inpaint(checkpoint_path, target_path, reference_path, mask_image,
     from PIL import Image
     if seed is None or int(seed) < 0:
         seed = _random.randint(0, 2**31 - 1)
-    pipe = _get_ip_inpaint(checkpoint_path)
+    pipe = _get_inpaint(checkpoint_path, with_ip=True)
     pipe.set_ip_adapter_scale(float(ip_scale))
     target = Image.open(target_path).convert("RGB")
     ref = Image.open(reference_path).convert("RGB")
@@ -337,36 +343,73 @@ def ip_adapter_inpaint(checkpoint_path, target_path, reference_path, mask_image,
         return None
 
 
-def run_adetailer(checkpoint_path, image_path, prompt, negative, sampler, scheduler,
-                  steps=30, cfg=7.0, clip_skip=1, out_dir=None) -> str | None:
-    """Detect faces in ``image_path`` and re-inpaint each at higher detail using the
-    given prompts. Returns the refined image path (or the original on no-op/failure)."""
+def _detect_face_boxes(image_path, threshold=0.4):
+    """Return [(x1,y1,x2,y2), ...] face boxes via InsightFace (buffalo_l)."""
+    try:
+        import cv2
+        from insightface.app import FaceAnalysis
+        app = FaceAnalysis(name="buffalo_l",
+                           providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+        app.prepare(ctx_id=0, det_size=(640, 640))
+        boxes = []
+        for f in app.get(cv2.imread(image_path)):
+            if float(getattr(f, "det_score", 1.0)) < threshold:
+                continue
+            x1, y1, x2, y2 = (int(v) for v in f.bbox)
+            boxes.append((x1, y1, x2, y2))
+        return boxes
+    except Exception:
+        logger.warning("ADetailer face detection failed", exc_info=True)
+        return []
+
+
+def run_adetailer(checkpoint_path, image_path, prompt, negative, sampler=None,
+                  scheduler=None, steps=24, cfg=7.0, clip_skip=1, denoise=0.4,
+                  pad=0.35, out_dir=None) -> str | None:
+    """Detect faces and re-inpaint each at higher detail. Self-contained: InsightFace
+    detection + diffusers SDXL inpaint, crop → inpaint → feathered paste at full res
+    (no external SD checkout). Returns the refined path (or the original on no-op)."""
     import time
-    from PIL import Image
-    from supremediffusion.models.adetailer import ADetailerProcessor
-    models_root = str(Path(SD_CHECKOUT) / "models")
-    release_inpaint()  # free the diffusers IP-Adapter inpaint pipe first
-    pipe = get_pipeline()
+    from PIL import Image, ImageDraw, ImageFilter
     src = Image.open(image_path).convert("RGB")
-    orig_size = src.size
-    with models.no_auto_download():
-        pipe.load(checkpoint_path)
-        proc = ADetailerProcessor(models_root)
-        refined = proc.process(
-            src, sd_pipeline=pipe,
-            base_prompt=prompt or "", base_neg_prompt=negative or "",
-            base_steps=int(steps), base_cfg=float(cfg), sampler=sampler,
-            scheduler=scheduler, clip_skip=int(clip_skip),
-            prompt_override=prompt or "", neg_prompt_override=negative or "")
-    # ADetailer's full-res paste can enlarge the canvas to max(orig, inpaint_size)
-    # per axis, stretching a portrait wider — restore the original dimensions.
-    if refined is not None and refined.size != orig_size:
-        refined = refined.resize(orig_size, Image.LANCZOS)
+    W, H = src.size
+    boxes = _detect_face_boxes(image_path)
+    if not boxes:
+        logger.info("ADetailer: no faces detected; passing through.")
+        return image_path
+    release_sd()  # free the txt2img checkpoint
+    pipe = _get_inpaint(checkpoint_path, with_ip=False)
+    result = src.copy()
+    for (x1, y1, x2, y2) in boxes:
+        bw, bh = x2 - x1, y2 - y1
+        px, py = bw * pad, bh * pad
+        cx1, cy1 = max(0, int(x1 - px)), max(0, int(y1 - py))
+        cx2, cy2 = min(W, int(x2 + px)), min(H, int(y2 + py))
+        crop = result.crop((cx1, cy1, cx2, cy2))
+        cw, ch = crop.size
+        if cw < 16 or ch < 16:
+            continue
+        # White over the (unpadded) face within the crop, feathered for a soft blend.
+        m = Image.new("L", (cw, ch), 0)
+        ImageDraw.Draw(m).rectangle(
+            (int(x1 - cx1), int(y1 - cy1), int(x2 - cx1), int(y2 - cy1)), fill=255)
+        m = m.filter(ImageFilter.GaussianBlur(radius=max(4, cw // 25)))
+        # Inpaint at ~1024 on the long side, snapped to multiples of 8.
+        scale = 1024.0 / max(cw, ch)
+        tw = max(8, (int(round(cw * scale)) // 8) * 8)
+        th = max(8, (int(round(ch * scale)) // 8) * 8)
+        with models.no_auto_download():
+            out_img = pipe(prompt=prompt or "", negative_prompt=negative or "",
+                           image=crop.resize((tw, th), Image.LANCZOS),
+                           mask_image=m.resize((tw, th), Image.LANCZOS),
+                           strength=float(denoise), num_inference_steps=int(steps),
+                           guidance_scale=float(cfg), width=tw, height=th).images[0]
+        result.paste(out_img.resize((cw, ch), Image.LANCZOS), (cx1, cy1), m)
     out = Path(out_dir) if out_dir else (paths.cache_dir() / "swap")
     out.mkdir(parents=True, exist_ok=True)
     f = out / f"adetail_{int(time.time())}.png"
     try:
-        refined.save(f)
+        result.save(f)
         return str(f)
     except Exception:
         logger.warning("failed saving ADetailer result", exc_info=True)
