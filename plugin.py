@@ -263,12 +263,19 @@ class ReplicantCharLab(WAN2GPPlugin):
             idle = which is None
             ups = [gr.update(interactive=idle) for _ in rail]
             ups += [gr.update(interactive=idle), gr.update(interactive=idle)]  # back, next
-            ups += [gr.update(interactive=idle),
-                    gr.update(interactive=(which == "face")),
-                    gr.update(interactive=(which == "face"))]
-            ups += [gr.update(interactive=idle),
-                    gr.update(interactive=(which == "body")),
-                    gr.update(interactive=(which == "body"))]
+            # The Run button doubles as Discard while its own swap is under review.
+            if which == "face":
+                ups += [gr.update(value="✕ Discard", variant="secondary", interactive=True),
+                        gr.update(interactive=True), gr.update(interactive=True)]
+            else:
+                ups += [gr.update(value="Run face swap", variant="primary", interactive=idle),
+                        gr.update(interactive=False), gr.update(interactive=False)]
+            if which == "body":
+                ups += [gr.update(value="✕ Discard", variant="secondary", interactive=True),
+                        gr.update(interactive=True), gr.update(interactive=True)]
+            else:
+                ups += [gr.update(value="Run body swap", variant="primary", interactive=idle),
+                        gr.update(interactive=False), gr.update(interactive=False)]
             return ups
 
         def _run_face(state, target_base, face_src, enhancer, strength, blend):
@@ -294,10 +301,19 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         face_in = [self.state, base["selected_base"], swap["face_source"],
                    swap["face_enhancer"], swap["face_enhancer_strength"], swap["face_blend_ratio"]]
-        swap["run_face"].click(_run_face, inputs=face_in, outputs=[swap["result"]] + LOCK)
+
+        def _face_click(mode, *args):
+            if mode == "review":  # Run button is showing Discard → drop the attempt
+                return [None, "idle"] + _lockset(None)
+            res = _run_face(*args)  # [result] + _lockset("face")
+            return [res[0], "review"] + res[1:]
+
+        swap["run_face"].click(_face_click, inputs=[swap["face_mode"]] + face_in,
+                               outputs=[swap["result"], swap["face_mode"]] + LOCK)
         swap["retry_face"].click(_run_face, inputs=face_in, outputs=[swap["result"]] + LOCK)
-        swap["accept_face"].click(lambda res: [res or gr.update()] + _lockset(None),
-                                  inputs=[swap["result"]], outputs=[base["selected_base"]] + LOCK)
+        swap["accept_face"].click(lambda res: [res or gr.update(), "idle"] + _lockset(None),
+                                  inputs=[swap["result"]],
+                                  outputs=[base["selected_base"], swap["face_mode"]] + LOCK)
 
         def _run_body(state, model, sel_base, body_src, ip_scale, denoise, body_cfg,
                       cn_strength, steps, seed, sampler, scheduler, pos, neg, adet,
@@ -331,10 +347,18 @@ class ReplicantCharLab(WAN2GPPlugin):
                    swap["body_ip_scale"], swap["body_denoise"], swap["body_cfg"],
                    swap["body_cn_strength"], s["steps"], s["seed"], s["sampler"],
                    s["scheduler"], base["pos"], base["neg"], swap["adetailer"]]
-        swap["run_body"].click(_run_body, inputs=body_in, outputs=[swap["result"]] + LOCK)
+        def _body_click(mode, *args, progress=gr.Progress()):
+            if mode == "review":  # Run button is showing Discard → drop the attempt
+                return [None, "idle"] + _lockset(None)
+            res = _run_body(*args, progress=progress)  # [result] + _lockset("body")
+            return [res[0], "review"] + res[1:]
+
+        swap["run_body"].click(_body_click, inputs=[swap["body_mode"]] + body_in,
+                               outputs=[swap["result"], swap["body_mode"]] + LOCK)
         swap["retry_body"].click(_run_body, inputs=body_in, outputs=[swap["result"]] + LOCK)
-        swap["accept_body"].click(lambda res: [res or gr.update()] + _lockset(None),
-                                  inputs=[swap["result"]], outputs=[base["selected_base"]] + LOCK)
+        swap["accept_body"].click(lambda res: [res or gr.update(), "idle"] + _lockset(None),
+                                  inputs=[swap["result"]],
+                                  outputs=[base["selected_base"], swap["body_mode"]] + LOCK)
 
         # A/B compare: base vs swapped, side by side, each full-screen + zoomable.
         def _ab(base_img, result_img):

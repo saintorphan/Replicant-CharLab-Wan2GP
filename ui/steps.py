@@ -183,6 +183,9 @@ def build_swap(visible: bool, init=None):
             c["ab_close"] = gr.Button("Close compare")
         c["ab_row"] = ab_row
         c["ab_close_row"] = ab_close_row
+        # "idle" or "review" — lets the Run button double as Discard during review.
+        c["face_mode"] = gr.State("idle")
+        c["body_mode"] = gr.State("idle")
     return g, c
 
 
