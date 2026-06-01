@@ -1,6 +1,13 @@
 """CSS for the Replicant Character Lab tab (banner + step rail)."""
 
 CSS = """
+/* Make our main-webui tab stand out with a purple border echoing the logo. */
+button.replicant-tabbtn {
+    border: 2px solid #a64dff !important;
+    border-radius: 4px !important;
+    box-shadow: 0 0 6px rgba(166, 77, 255, 0.55) !important;
+}
+
 #replicant-banner { text-align: center; margin: 4px 0 14px 0; }
 #replicant-banner img { width: 100%; max-width: 640px; height: auto; display: inline-block; }
 

@@ -110,6 +110,16 @@ class ReplicantCharLab(WAN2GPPlugin):
         from .core import wizard_state
         init = wizard_state.load()
         gr.HTML(f"<style>{CSS}</style>")
+        # Tag our main-webui tab button (Gradio gives no elem_id for it) so the
+        # purple-border CSS above can target only our tab.
+        gr.HTML(
+            "<script>(function(){"
+            "var NAME=" + repr(PLUGIN_NAME) + ";"
+            "function mark(){document.querySelectorAll("
+            "'.tab-nav button,button[role=\"tab\"]').forEach(function(b){"
+            "if(b.textContent.trim()===NAME)b.classList.add('replicant-tabbtn');});}"
+            "mark();new MutationObserver(mark).observe(document.body,"
+            "{childList:true,subtree:true});})();</script>")
         with gr.Column():
             ui = wizard.build_wizard(model_choices=model_choices, lora_choices=lora_choices,
                                      init=init)
