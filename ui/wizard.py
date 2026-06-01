@@ -72,10 +72,21 @@ def build_wizard():
                     target]
         return updates
 
+    # Conditional skip: when a reference image is supplied on step 1, Base Gen
+    # (index 2) is skipped — the reference becomes the base.
+    BASE_IDX = 2
+    reference = comps["info"]["reference_image"]
+
+    def _nav(s, ref, delta):
+        target = int(s) + delta
+        if target == BASE_IDX and ref:
+            target = BASE_IDX + delta  # 3 going forward, 1 going back
+        return _set_step(target)
+
     for i, btn in enumerate(rail):
         btn.click(lambda i=i: _set_step(i), outputs=nav_outputs)
-    back_btn.click(lambda s: _set_step(s - 1), inputs=[step], outputs=nav_outputs)
-    next_btn.click(lambda s: _set_step(s + 1), inputs=[step], outputs=nav_outputs)
+    back_btn.click(lambda s, ref: _nav(s, ref, -1), inputs=[step, reference], outputs=nav_outputs)
+    next_btn.click(lambda s, ref: _nav(s, ref, +1), inputs=[step, reference], outputs=nav_outputs)
 
     return {"step": step, "groups": groups, "rail": rail,
             "nav": (back_btn, next_btn), "components": comps, "prereqs": prereqs}
