@@ -57,12 +57,39 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
                     'saintorphan/Replicant-CharLab-Wan2GP" target="_blank" '
                     'rel="noopener">https://github.com/saintorphan/'
                     'Replicant-CharLab-Wan2GP</a></div>', elem_classes="replicant-ghwrap")
-        with gr.Column(scale=3, min_width=200, elem_id="replicant-clearcol"):
-            header_clear_files = gr.Checkbox(value=False,
-                label="Delete all unsaved generations (candidates / base / reference / "
-                      "swaps / poses)")
-            header_clear_btn = gr.Button("🗑 Clear Wizard", variant="stop",
-                                         elem_id="replicant-clearbtn")
+        with gr.Column(scale=3, min_width=240, elem_id="replicant-clearcol"):
+            with gr.Row():
+                header_load_existing = gr.Dropdown(label="Load character",
+                                                   choices=paths.list_characters(), scale=4)
+                header_refresh_btn = gr.Button("⟳", scale=0, min_width=42)
+            with gr.Row():
+                header_load_btn = gr.Button("📂 Load", scale=1)
+                header_save_btn = gr.Button("💾 Save Character", variant="primary", scale=1)
+            # Confirm: save current work before loading another character.
+            with gr.Row(visible=False) as load_confirm_row:
+                gr.Markdown("**Save current character first?**")
+            with gr.Row(visible=False) as load_confirm_btns:
+                header_load_save_first = gr.Button("Save & Load", variant="primary")
+                header_load_discard = gr.Button("Load without saving", variant="stop")
+                header_load_cancel = gr.Button("Cancel")
+            with gr.Row():
+                header_clear_btn = gr.Button("🗑 Clear Wizard", variant="stop",
+                                             elem_id="replicant-clearbtn")
+                header_clear_cache = gr.Button("🧹 Clear Cache", variant="stop")
+            # Confirm: clearing resets the wizard form only.
+            with gr.Row(visible=False) as clear_confirm_row:
+                gr.Markdown("**Reset the wizard form?** Saved characters are not affected.")
+            with gr.Row(visible=False) as clear_confirm_btns:
+                header_confirm_clear = gr.Button("Yes, reset", variant="stop")
+                header_cancel_clear = gr.Button("Cancel")
+            # Warning: clearing the cache deletes unsaved generations on disk.
+            with gr.Row(visible=False) as cache_confirm_row:
+                gr.Markdown("⚠️ **Clear Cache** permanently deletes all unsaved "
+                            "generations on disk — candidates, base, reference, swaps "
+                            "and poses. Saved characters and datasets are not affected.")
+            with gr.Row(visible=False) as cache_confirm_btns:
+                header_confirm_cache = gr.Button("Yes, delete cache", variant="stop")
+                header_cancel_cache = gr.Button("Cancel")
 
     # Prerequisites (directories + models) ----------------------------------
     prereqs = build_prereqs()
@@ -82,9 +109,26 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
         g, c = builder(visible=(i == 0), init=init)
         groups.append(g)
         comps[STEPS[i][0]] = c
-    # Clear Wizard now lives in the header; expose it where the wiring looks.
+    # Load / Save / Clear are header session actions; expose them where the wiring looks.
+    comps["setup"]["load_existing"] = header_load_existing
+    comps["setup"]["load_btn"] = header_load_btn
+    comps["setup"]["refresh_btn"] = header_refresh_btn
+    comps["setup"]["load_confirm_row"] = load_confirm_row
+    comps["setup"]["load_confirm_btns"] = load_confirm_btns
+    comps["setup"]["load_save_first"] = header_load_save_first
+    comps["setup"]["load_discard"] = header_load_discard
+    comps["setup"]["load_cancel"] = header_load_cancel
+    comps["save"]["save"] = header_save_btn
     comps["setup"]["clear_btn"] = header_clear_btn
-    comps["setup"]["clear_files"] = header_clear_files
+    comps["setup"]["clear_confirm_row"] = clear_confirm_row
+    comps["setup"]["clear_confirm_btns"] = clear_confirm_btns
+    comps["setup"]["confirm_clear"] = header_confirm_clear
+    comps["setup"]["cancel_clear"] = header_cancel_clear
+    comps["setup"]["clear_cache"] = header_clear_cache
+    comps["setup"]["cache_confirm_row"] = cache_confirm_row
+    comps["setup"]["cache_confirm_btns"] = cache_confirm_btns
+    comps["setup"]["confirm_cache"] = header_confirm_cache
+    comps["setup"]["cancel_cache"] = header_cancel_cache
 
     # Nav -------------------------------------------------------------------
     with gr.Row(elem_id="replicant-nav"):
@@ -269,22 +313,38 @@ def _wire_persistence(comps, settings, poses_state, init):
             wizard_state.save(d)
         gal.change(_save_gal, inputs=[gal], outputs=[])
 
-    # --- Clear Wizard: reset everything + wipe persisted state/files ---
-    clear_btn = comps["setup"].get("clear_btn")
-    clear_files = comps["setup"].get("clear_files")
+    # --- Clear Wizard (form reset) + Clear Cache (delete files), both confirmed ---
+    su = comps["setup"]
+    clear_btn = su.get("clear_btn")
     if clear_btn is not None:
         import shutil
         clear_outputs = fields + img_comps + ([gal] if gal is not None else []) + [poses_state]
+        ccr, ccb = su["clear_confirm_row"], su["clear_confirm_btns"]
+        kar, kab = su["cache_confirm_row"], su["cache_confirm_btns"]
 
-        def _clear(delete_files):
-            wizard_state.clear()  # always reset the form state
-            if delete_files:      # also delete the unsaved generation files on disk
-                for sub in ("persist", "sd_gen", "poses", "swap"):
-                    shutil.rmtree(paths.cache_dir() / sub, ignore_errors=True)
+        def _clear():
+            wizard_state.clear()  # reset the form state only
             return ([defaults[k] for k in keys]
                     + [None] * len(img_comps) + ([None] if gal is not None else [])
-                    + [{"poses": [], "specs": []}])
-        clear_btn.click(_clear, inputs=[clear_files], outputs=clear_outputs)
+                    + [{"poses": [], "specs": []}]
+                    + [gr.update(visible=False), gr.update(visible=False)])
+
+        def _clear_cache():
+            for sub in ("persist", "sd_gen", "poses", "swap", "inpaint"):
+                shutil.rmtree(paths.cache_dir() / sub, ignore_errors=True)
+            gr.Info("Cache cleared.")
+            return gr.update(visible=False), gr.update(visible=False)
+
+        _show2 = lambda: (gr.update(visible=True), gr.update(visible=True))
+        _hide2 = lambda: (gr.update(visible=False), gr.update(visible=False))
+
+        clear_btn.click(_show2, outputs=[ccr, ccb])
+        su["cancel_clear"].click(_hide2, outputs=[ccr, ccb])
+        su["confirm_clear"].click(_clear, outputs=clear_outputs + [ccr, ccb])
+
+        su["clear_cache"].click(_show2, outputs=[kar, kab])
+        su["cancel_cache"].click(_hide2, outputs=[kar, kab])
+        su["confirm_cache"].click(_clear_cache, outputs=[kar, kab])
 
 
 def _summary(cs, cdir) -> str:
@@ -320,8 +380,6 @@ def _wire_load_save(comps, settings, poses_state):
                 cs.reference_image or None, cs.selected_base or None,
                 cs.steps, cs.cfg_scale, cs.seed, cs.width, cs.height]
 
-    info["load_btn"].click(_load, inputs=[info["load_existing"]], outputs=load_outputs)
-
     # Seed the positive prompt from description + style; fill default negative if empty.
     def _seed(desc, style, cur_neg):
         neg = cur_neg if (cur_neg and cur_neg.strip()) else character.DEFAULT_NEGATIVE
@@ -343,6 +401,7 @@ def _wire_load_save(comps, settings, poses_state):
               steps, cfg, seed, width, height, poses_data,
               progress=gr.Progress()):
         if not (name and name.strip()):
+            gr.Warning("Enter a character name first.")
             return "⚠️ Enter a character name first.", gr.update()
         pd = poses_data or {}
         cs = character.CharacterState(
@@ -369,7 +428,34 @@ def _wire_load_save(comps, settings, poses_state):
             except Exception:
                 msg += " · ⚠️ dataset build failed (see console)"
                 traceback.print_exc()
+        gr.Info(msg)
         return msg, _summary(cs, cdir)
 
     save["save"].click(_save, inputs=save_inputs,
                        outputs=[save["save_status"], save["summary"]])
+
+    # --- Load with a "save current first?" guard --------------------------------
+    lcr, lcb = info["load_confirm_row"], info["load_confirm_btns"]
+
+    def _load_guard(sel, name, sbase):
+        if not sel:
+            raise gr.Error("Pick a character to load first.")
+        if (name and name.strip()) or sbase:  # there's work on the canvas
+            return [gr.update(visible=True), gr.update(visible=True)] \
+                + [gr.update()] * len(load_outputs)
+        return [gr.update(visible=False), gr.update(visible=False)] + _load(sel)
+
+    def _do_load(sel):
+        return [gr.update(visible=False), gr.update(visible=False)] + _load(sel)
+
+    info["load_btn"].click(_load_guard,
+                           inputs=[info["load_existing"], info["name"],
+                                   base["selected_base"]],
+                           outputs=[lcr, lcb] + load_outputs)
+    info["load_save_first"].click(
+        _save, inputs=save_inputs, outputs=[save["save_status"], save["summary"]]).then(
+        _do_load, inputs=[info["load_existing"]], outputs=[lcr, lcb] + load_outputs)
+    info["load_discard"].click(_do_load, inputs=[info["load_existing"]],
+                               outputs=[lcr, lcb] + load_outputs)
+    info["load_cancel"].click(
+        lambda: (gr.update(visible=False), gr.update(visible=False)), outputs=[lcr, lcb])

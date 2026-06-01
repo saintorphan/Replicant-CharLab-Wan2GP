@@ -50,11 +50,7 @@ def build_setup(visible: bool, init=None):
         c = {}
         with gr.Row():
             with gr.Column(scale=1):
-                with gr.Row():
-                    c["load_existing"] = gr.Dropdown(label="Load existing character",
-                                                     choices=paths.list_characters(), scale=4)
-                    c["load_btn"] = gr.Button("Load", scale=0, min_width=80)
-                    c["refresh_btn"] = gr.Button("⟳", scale=0, min_width=44)
+                # Load/Save/Clear live in the header now (session actions).
                 c["name"] = gr.Textbox(label="Character name", placeholder="e.g. Nova")
                 c["description"] = gr.Textbox(label="Description", lines=3,
                     placeholder="a voluptuous woman with brown hair and glasses")
@@ -292,10 +288,11 @@ def build_poses(visible: bool, init=None):
 def build_save(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ⑥ Save Character")
+        gr.Markdown("<sub>Use **Save Character** in the header (top-right) to save at any "
+                    "time. Saving with approved poses also builds the LoRA datasets.</sub>")
         c = {}
         c["summary"] = gr.Markdown("_Fill in the earlier steps; the save summary "
                                    "appears here._")
-        c["save"] = gr.Button("💾 Save character + build datasets", variant="primary")
         c["save_status"] = gr.Markdown()
     return g, c
 
