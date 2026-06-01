@@ -1,0 +1,8 @@
+# Replicant Character Lab — runtime deps.
+# Wan2GP already provides gradio, torch, Pillow, numpy.
+#
+# Face swap + body swap are REQUIRED: they are configured on the Face/Body step
+# and applied mandatorily to every generated pose, plus used for dataset
+# head/upper-body crops. InsightFace is therefore a hard dependency.
+insightface
+onnxruntime-gpu

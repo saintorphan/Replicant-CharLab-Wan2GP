@@ -1,0 +1,9 @@
+{
+  "name": "Replicant Character Lab",
+  "author": "saintorphan",
+  "version": "0.1.0",
+  "description": "Character creator wizard: build a reusable character (prompts, base image, poses, LoRA datasets, training) in a guided 7-step tab. Ported from SupremeDiffusion.",
+  "date": "",
+  "wan2gp_version": "",
+  "url": "https://github.com/saintorphan/Replicant-CharLab-Wan2GP"
+}
