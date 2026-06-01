@@ -19,9 +19,10 @@ STEPS = [
     ("prompt", "② Prompt"),
     ("base", "③ Base Gen"),
     ("swap", "④ Face / Body"),
-    ("poses", "⑤ Poses"),
-    ("save", "⑥ Save"),
-    ("train", "⑦ Train"),
+    ("inpaint", "⑤ Inpaint"),
+    ("poses", "⑥ Poses"),
+    ("save", "⑦ Save"),
+    ("train", "⑧ Train"),
 ]
 
 STYLES = ["realism", "anime", "cartoon"]
@@ -196,6 +197,34 @@ def build_swap(visible: bool, init=None):
     return g, c
 
 
+def build_inpaint(visible: bool, init=None):
+    with gr.Group(visible=visible, elem_classes="replicant-step") as g:
+        gr.Markdown("### ⑤ Inpaint / Touch-ups")
+        gr.Markdown("<sub>Optional final fixes on the base before posing. Load the base, "
+                    "paint over the area to redo, describe the fix, Run, then Use as Base. "
+                    "(SDXL/Pony/Illustrious models.)</sub>")
+        c = {}
+        with gr.Row():
+            c["load_base"] = gr.Button("⬆ Load current base into editor")
+        with gr.Row():
+            with gr.Column(scale=1):
+                c["editor"] = gr.ImageEditor(label="Paint the area to fix", type="numpy",
+                                             height=560, layers=False, eraser=True,
+                                             transforms=[],
+                                             brush=gr.Brush(colors=["#ffffff"],
+                                                            color_mode="fixed"))
+            with gr.Column(scale=1):
+                c["inpaint_result"] = gr.Image(label="Result", type="filepath", height=560,
+                                               interactive=False, show_fullscreen_button=True)
+        c["inpaint_prompt"] = gr.Textbox(label="What to put there (prompt)", lines=2)
+        c["inpaint_neg"] = gr.Textbox(label="Negative", lines=1)
+        with gr.Row():
+            c["inpaint_denoise"] = gr.Slider(0.2, 1.0, value=0.75, step=0.05, label="Denoise")
+            c["run_inpaint"] = gr.Button("Run inpaint", variant="primary")
+            c["use_inpaint"] = gr.Button("✓ Use as Base", variant="primary")
+    return g, c
+
+
 def build_poses(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ⑤ Pose Variants")
@@ -243,5 +272,5 @@ def build_train(visible: bool, init=None):
     return g, c
 
 
-BUILDERS = [build_info, build_prompt, build_base, build_swap,
+BUILDERS = [build_info, build_prompt, build_base, build_swap, build_inpaint,
             build_poses, build_save, build_train]

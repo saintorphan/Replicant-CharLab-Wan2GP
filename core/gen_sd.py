@@ -142,6 +142,36 @@ def generate_img2img(checkpoint_path, image_path, prompt, negative, width, heigh
     return saved
 
 
+def inpaint(checkpoint_path, image_path, mask_image, prompt, negative, denoise=0.75,
+            steps=30, cfg=6.0, seed=-1, sampler="DPM++ 2M", scheduler="Karras",
+            clip_skip=1, out_dir=None, progress=None) -> str | None:
+    """Prompt-driven masked inpaint for manual touch-ups (no IP-Adapter)."""
+    import random as _random
+    from PIL import Image
+    pipe = get_pipeline()
+    if seed is None or int(seed) < 0:
+        seed = _random.randint(0, 2**31 - 1)
+    img = Image.open(image_path).convert("RGB") if isinstance(image_path, str) else image_path
+    w, h = img.size
+    with models.no_auto_download():
+        pipe.load(checkpoint_path)
+        images = pipe.generate_inpaint(
+            image=img, mask=mask_image, prompt=prompt or "", negative_prompt=negative or "",
+            denoising_strength=float(denoise), width=int(w), height=int(h), steps=int(steps),
+            cfg_scale=float(cfg), seed=int(seed), sampler=sampler, scheduler=scheduler,
+            clip_skip=int(clip_skip), full_res=False)
+    out = Path(out_dir) if out_dir else (paths.cache_dir() / "inpaint")
+    out.mkdir(parents=True, exist_ok=True)
+    for i, im in enumerate(images or []):
+        f = out / f"inp_{int(seed)}_{i}.png"
+        try:
+            im.save(f)
+            return str(f)
+        except Exception:
+            logger.warning("failed saving inpaint", exc_info=True)
+    return None
+
+
 # ---- Shared IP-Adapter masked-inpaint identity transfer -------------------
 # One primitive for both: body swap (ref = source body) and pose identity
 # (ref = base). diffusers SDXL inpaint + IP-Adapter (plus, ViT-H). No ControlNet,

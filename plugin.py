@@ -347,7 +347,63 @@ class ReplicantCharLab(WAN2GPPlugin):
             lambda: (gr.update(visible=False), gr.update(visible=False)),
             outputs=[swap["ab_row"], swap["ab_close_row"]])
 
-        # -- step 5: pose variants (+ mandatory base-face swap) --
+        # -- inpaint touch-ups: paint a mask on the base, prompt-driven inpaint --
+        inp = c["inpaint"]
+        inp["load_base"].click(lambda b: b, inputs=[base["selected_base"]],
+                               outputs=[inp["editor"]])
+
+        def _editor_mask(ev):
+            import numpy as np
+            from PIL import Image
+            bg = ev.get("background") if isinstance(ev, dict) else None
+            if bg is None:
+                raise gr.Error("Load the base into the editor first.")
+            H, W = bg.shape[:2]
+            m = np.zeros((H, W), "uint8")
+            for L in (ev.get("layers") or []):
+                if getattr(L, "ndim", 0) == 3 and L.shape[2] == 4:
+                    m = np.maximum(m, (L[..., 3] > 0).astype("uint8") * 255)
+                elif getattr(L, "ndim", 0) == 3:
+                    m = np.maximum(m, (L[..., :3].sum(2) > 0).astype("uint8") * 255)
+            return bg, Image.fromarray(m, "L")
+
+        def _run_inpaint(state, model, ev, ip_prompt, ip_neg, ip_denoise,
+                         steps, cfg, seed, sampler, scheduler, clip_skip,
+                         progress=gr.Progress()):
+            backend, ident = discovery.parse_model_value(model)
+            if backend != "sd":
+                raise gr.Error("Inpaint needs an SDXL/Pony/Illustrious model selected.")
+            from PIL import Image
+            bg, mask = _editor_mask(ev)
+            if mask.getextrema() == (0, 0):
+                raise gr.Error("Paint the area to fix first.")
+            gen_sd.release_inpaint()
+            self._release_faceswap()
+            if not self.acquire_gpu(state):
+                return gr.update()
+            try:
+                import os
+                import tempfile
+                tp = os.path.join(tempfile.mkdtemp(), "inp_src.png")
+                Image.fromarray(bg[..., :3] if bg.ndim == 3 else bg).save(tp)
+                return gen_sd.inpaint(ident, tp, mask, ip_prompt, ip_neg,
+                                      denoise=float(ip_denoise), steps=int(steps),
+                                      cfg=float(cfg), seed=int(seed), sampler=sampler,
+                                      scheduler=scheduler, clip_skip=int(clip_skip),
+                                      progress=progress) or gr.update()
+            finally:
+                self.release_gpu(state)
+
+        inp["run_inpaint"].click(
+            _run_inpaint,
+            inputs=[self.state, s["model"], inp["editor"], inp["inpaint_prompt"],
+                    inp["inpaint_neg"], inp["inpaint_denoise"], s["steps"], s["cfg_scale"],
+                    s["seed"], s["sampler"], s["scheduler"], s["clip_skip"]],
+            outputs=[inp["inpaint_result"]])
+        inp["use_inpaint"].click(lambda r: r or gr.update(), inputs=[inp["inpaint_result"]],
+                                 outputs=[base["selected_base"]])
+
+        # -- step 6: pose variants (+ mandatory base-face swap) --
         def _gen_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
                        width, height, pos, neg, sel_base, progress=gr.Progress()):
             if not sel_base:
