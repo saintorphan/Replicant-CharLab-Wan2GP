@@ -111,15 +111,17 @@ class ReplicantCharLab(WAN2GPPlugin):
         init = wizard_state.load()
         gr.HTML(f"<style>{CSS}</style>")
         # Tag our main-webui tab button (Gradio gives no elem_id for it) so the
-        # purple-border CSS above can target only our tab.
+        # purple-border CSS above can target only our tab. gr.HTML sets innerHTML,
+        # which does NOT execute <script> tags — so run via an <img onerror> hook,
+        # which fires even when inserted that way.
         gr.HTML(
-            "<script>(function(){"
+            "<img src=x style='display:none' onerror=\"(function(){"
             "var NAME=" + repr(PLUGIN_NAME) + ";"
             "function mark(){document.querySelectorAll("
-            "'.tab-nav button,button[role=\"tab\"]').forEach(function(b){"
+            "'.tab-nav button,button[role=&quot;tab&quot;]').forEach(function(b){"
             "if(b.textContent.trim()===NAME)b.classList.add('replicant-tabbtn');});}"
             "mark();new MutationObserver(mark).observe(document.body,"
-            "{childList:true,subtree:true});})();</script>")
+            "{childList:true,subtree:true});})()\">")
         with gr.Column():
             ui = wizard.build_wizard(model_choices=model_choices, lora_choices=lora_choices,
                                      init=init)
