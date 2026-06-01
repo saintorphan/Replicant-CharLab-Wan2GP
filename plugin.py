@@ -109,7 +109,9 @@ class ReplicantCharLab(WAN2GPPlugin):
         lora_choices = discovery.lora_choices()  # categorized; filtered by model below
         from .core import wizard_state
         init = wizard_state.load()
-        gr.HTML(f"<style>{CSS}</style>")
+        # These two render nothing visible; hide their wrappers so they don't add
+        # flex-gap space above the logo.
+        gr.HTML(f"<style>{CSS}</style>", elem_classes="replicant-hidden")
         # Tag our main-webui tab button (Gradio gives no elem_id for it) so the
         # purple-border CSS above can target only our tab. gr.HTML sets innerHTML,
         # which does NOT execute <script> tags — so run via an <img onerror> hook,
@@ -121,8 +123,9 @@ class ReplicantCharLab(WAN2GPPlugin):
             "'.tab-nav button,button[role=&quot;tab&quot;]').forEach(function(b){"
             "if(b.textContent.trim()===NAME)b.classList.add('replicant-tabbtn');});}"
             "mark();new MutationObserver(mark).observe(document.body,"
-            "{childList:true,subtree:true});})()\">")
-        with gr.Column():
+            "{childList:true,subtree:true});})()\">",
+            elem_classes="replicant-hidden")
+        with gr.Column(elem_id="replicant-root"):
             ui = wizard.build_wizard(model_choices=model_choices, lora_choices=lora_choices,
                                      init=init)
         self._wire_enhancer(ui)

@@ -11,10 +11,13 @@ button.replicant-tabbtn {
 #replicant-banner { text-align: center; margin: 4px 0 14px 0; }
 #replicant-banner img { width: 56%; max-width: 890px; height: auto; display: inline-block; }
 
-#replicant-header { align-items: center; margin: 4px 0 14px 0; }
+.replicant-hidden { display: none !important; }
+/* Pull the lab content flush to the tab bar — no gap above the logo. */
+#replicant-root { padding-top: 0 !important; margin-top: 0 !important; gap: 0; }
+#replicant-header { align-items: center; margin: 0 0 14px 0; }
 #replicant-header #replicant-banner { margin: 0; text-align: center; }
-/* Keep the logo at its original 1580x392 (~4.03:1) ratio and center it. */
-#replicant-header #replicant-banner img { width: 100%; max-width: 890px; height: auto;
+/* Scaled to the column, preserving the 1580x392 (~4.03:1) ratio, centered. */
+#replicant-header #replicant-banner img { width: 100%; max-width: 100%; height: auto;
     margin: 0 auto; display: block; }
 .replicant-taglines { display: flex; flex-direction: column; justify-content: center;
     align-items: center; gap: 22px; height: 100%; text-align: center;
