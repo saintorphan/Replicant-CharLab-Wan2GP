@@ -6,3 +6,6 @@
 # head/upper-body crops. InsightFace is therefore a hard dependency.
 insightface
 onnxruntime-gpu
+
+# BiRefNet (body-swap segmentation) custom modeling code needs kornia
+kornia

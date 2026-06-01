@@ -107,9 +107,12 @@ class ReplicantCharLab(WAN2GPPlugin):
         self._faceswap = None  # lazy FaceSwapPipeline
         model_choices = discovery.build_model_choices(self._native_model_types())
         lora_choices = [(m["name"], m["path"]) for m in discovery.discover_sdxl_loras()]
+        from .core import wizard_state
+        init = wizard_state.load()
         gr.HTML(f"<style>{CSS}</style>")
         with gr.Column():
-            ui = wizard.build_wizard(model_choices=model_choices, lora_choices=lora_choices)
+            ui = wizard.build_wizard(model_choices=model_choices, lora_choices=lora_choices,
+                                     init=init)
         self._wire_enhancer(ui)
         self._wire_generation(ui)
         self.on_tab_outputs = [self.main_tabs] if hasattr(self, "main_tabs") else None

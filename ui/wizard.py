@@ -3,12 +3,13 @@ visibility-toggled step panels (Gradio 5.29 has no native stepper component)."""
 from __future__ import annotations
 
 import base64
+import os
 import traceback
 from pathlib import Path
 
 import gradio as gr
 
-from ..core import character, datasets, paths
+from ..core import character, datasets, paths, wizard_state
 from .prereqs import build_prereqs
 from .settings_bar import build_settings_bar
 from .steps import BUILDERS, STEPS
@@ -33,7 +34,7 @@ def _banner_html() -> str:
     return '<div id="replicant-banner"><h2>Replicant · Character Lab</h2></div>'
 
 
-def build_wizard(model_choices=None, lora_choices=None):
+def build_wizard(model_choices=None, lora_choices=None, init=None):
     """Build the wizard UI inside the current tab context.
 
     model_choices/lora_choices populate the shared settings bar (the plugin
@@ -113,10 +114,64 @@ def build_wizard(model_choices=None, lora_choices=None):
                     outputs=[comps["swap"]["base_preview"]])
 
     _wire_load_save(comps, settings, poses_state)
+    _wire_persistence(comps, settings, poses_state, init or {})
 
     return {"step": step, "groups": groups, "rail": rail, "nav": (back_btn, next_btn),
             "components": comps, "settings": settings, "prereqs": prereqs,
             "poses_state": poses_state}
+
+
+# Fields autosaved/restored. Keyed "<group>.<name>"; "settings.*" come from the bar.
+_PERSIST_SPEC = {
+    "info": ["name", "description", "style", "reference_image", "selected_loras",
+             "lora_multipliers", "lora_trigger_words"],
+    "prompt": ["positive_prompt", "negative_prompt"],
+    "base": ["count", "selected_base"],
+    "settings": ["model", "sampler", "scheduler", "steps", "cfg_scale", "clip_skip",
+                 "seed", "width", "height", "adetailer", "loras", "lora_multipliers"],
+    "swap": ["face_source", "face_enhancer", "face_enhancer_strength", "face_blend_ratio",
+             "body_source", "body_ip_scale", "body_denoise", "body_cfg", "body_cn_strength"],
+    "poses": ["ref_look_strength", "apply_body_to_poses"],
+    "train": ["dataset", "low_vram", "epochs"],
+}
+_IMAGE_KEYS = {"info.reference_image", "base.selected_base", "swap.face_source",
+               "swap.body_source"}
+
+
+def _wire_persistence(comps, settings, poses_state, init):
+    pairs = []  # (key, component)
+    for group, names in _PERSIST_SPEC.items():
+        src = settings if group == "settings" else comps.get(group, {})
+        for name in names:
+            comp = src.get(name)
+            if comp is not None:
+                pairs.append((f"{group}.{name}", comp))
+
+    keys = [k for k, _ in pairs]
+    fields = [c for _, c in pairs]
+    defaults = {k: c.value for k, c in pairs}  # builder defaults (captured pre-restore)
+
+    # Restore persisted values (skip image paths whose temp file is gone).
+    for k, c in pairs:
+        if k in init:
+            v = init[k]
+            if k in _IMAGE_KEYS and not (isinstance(v, str) and os.path.isfile(v)):
+                continue
+            c.value = v
+
+    def _save(*vals):
+        wizard_state.save(dict(zip(keys, vals)))
+
+    for c in fields:
+        c.change(_save, inputs=fields, outputs=[])
+
+    # Clear Wizard: reset every field to its builder default + wipe persisted state.
+    clear_btn = comps["info"].get("clear_btn")
+    if clear_btn is not None:
+        def _clear():
+            wizard_state.clear()
+            return [defaults[k] for k in keys] + [{"poses": [], "specs": []}]
+        clear_btn.click(_clear, outputs=fields + [poses_state])
 
 
 def _summary(cs, cdir) -> str:

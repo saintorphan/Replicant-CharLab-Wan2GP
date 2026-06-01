@@ -50,6 +50,8 @@ def build_info(visible: bool):
             c["selected_loras"] = gr.Dropdown(label="LoRAs", multiselect=True, choices=[])
             c["lora_multipliers"] = gr.Textbox(label="Multipliers", placeholder="0.8, 1.0")
             c["lora_trigger_words"] = gr.Textbox(label="Trigger words")
+        gr.Markdown("<sub>All fields autosave; they'll be restored next launch.</sub>")
+        c["clear_btn"] = gr.Button("🗑 Clear Wizard", variant="stop")
     return g, c
 
 
