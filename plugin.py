@@ -294,13 +294,13 @@ class ReplicantCharLab(WAN2GPPlugin):
             return ups
 
         def _run_face(state, model, target_base, face_src, enhancer, strength, blend,
-                      adet_pos, adet_neg):
+                      use_adet, adet_pos, adet_neg):
             if not target_base:
                 raise gr.Error("Generate/select a base image first (step 3).")
             if not face_src:
                 raise gr.Error("Provide a face source image.")
             self._require(["inswapper_128", "buffalo_l"], "Face swap")
-            use_adet = (enhancer == "adetailer")
+            use_adet = bool(use_adet)
             if use_adet:
                 backend, ident = discovery.parse_model_value(model)
                 if backend != "sd":
@@ -311,10 +311,9 @@ class ReplicantCharLab(WAN2GPPlugin):
                 raise gr.Error("GPU is busy.")
             try:
                 import time
-                # adetailer isn't a face-restore model — run a clean swap, then refine.
                 img = self._face_pipe().swap(
                     source_path=face_src, target_path=target_base,
-                    enhancer=None if use_adet else (enhancer or None),
+                    enhancer=(enhancer or None),
                     blend_ratio=float(blend), enhancer_strength=float(strength))
                 out = paths.cache_dir() / "swap"; out.mkdir(parents=True, exist_ok=True)
                 p = out / f"face_{int(time.time())}.png"; img.save(p)
@@ -329,7 +328,7 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         face_in = [self.state, s["model"], base["selected_base"], swap["face_source"],
                    swap["face_enhancer"], swap["face_enhancer_strength"], swap["face_blend_ratio"],
-                   swap["face_adet_pos"], swap["face_adet_neg"]]
+                   swap["face_adetailer"], swap["face_adet_pos"], swap["face_adet_neg"]]
 
         def _face_click(mode, *args):
             if mode == "review":  # Run button is showing Discard → drop the attempt
@@ -393,9 +392,9 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         # ADetailer prompt rows: face row shows only when Enhancer == adetailer;
         # body row follows its ADetailer checkbox.
-        swap["face_enhancer"].change(
-            lambda v: gr.update(visible=(v == "adetailer")),
-            inputs=[swap["face_enhancer"]], outputs=[swap["face_adet_row"]])
+        swap["face_adetailer"].change(
+            lambda v: gr.update(visible=bool(v)),
+            inputs=[swap["face_adetailer"]], outputs=[swap["face_adet_row"]])
         swap["adetailer"].change(
             lambda v: gr.update(visible=bool(v)),
             inputs=[swap["adetailer"]], outputs=[swap["body_adet_row"]])

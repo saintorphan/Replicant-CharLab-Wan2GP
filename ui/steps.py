@@ -127,12 +127,12 @@ def build_swap(visible: bool, init=None):
                     "a bad swap can't corrupt the base.</sub>")
         c = {}
         with gr.Row():
-            c["ab_btn"] = gr.Button("🔍 A/B compare (full screen + zoom)")
-        with gr.Row():
             with gr.Column(scale=1):
                 c["base_preview"] = gr.Image(label="Current base", type="filepath",
                                              height=560, interactive=False,
                                              show_fullscreen_button=True)
+                c["ab_btn"] = gr.Button("🔍 A/B compare (full screen + zoom)",
+                                        scale=0, min_width=200)
                 c["result"] = gr.Image(label="Swap result (preview — Accept to make it the base)",
                                        type="filepath", height=560, interactive=False,
                                        show_fullscreen_button=True)
@@ -142,11 +142,13 @@ def build_swap(visible: bool, init=None):
                                             show_fullscreen_button=True,
                                             value=_init_img(init, "swap.face_source"))
                 with gr.Row():
-                    c["face_enhancer"] = gr.Radio(["", "gfpgan", "codeformer", "adetailer"],
+                    c["face_enhancer"] = gr.Radio(["", "gfpgan", "codeformer"],
                                                   value="", label="Enhancer")
                     c["face_enhancer_strength"] = gr.Slider(0.0, 1.0, value=0.5, label="Strength")
                 c["face_blend_ratio"] = gr.Slider(0.0, 1.0, value=0.5, label="Enhancer blend")
-                with gr.Row(visible=False) as face_adet_row:  # only when Enhancer = adetailer
+                c["face_adetailer"] = gr.Checkbox(value=False,
+                    label="ADetailer (face detail pass — needs SDXL/Pony/Illustrious model)")
+                with gr.Row(visible=False) as face_adet_row:  # toggled by the checkbox
                     c["face_adet_pos"] = gr.Textbox(label="ADetailer positive", lines=1, scale=1)
                     c["face_adet_neg"] = gr.Textbox(label="ADetailer negative", lines=1, scale=1)
                 c["face_adet_row"] = face_adet_row

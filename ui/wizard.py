@@ -165,7 +165,7 @@ _PERSIST_SPEC = {
     "settings": ["model", "sampler", "scheduler", "steps", "cfg_scale", "clip_skip",
                  "seed", "width", "height", "adetailer", "loras", "lora_multipliers"],
     "swap": ["face_enhancer", "face_enhancer_strength", "face_blend_ratio",
-             "face_adet_pos", "face_adet_neg",
+             "face_adetailer", "face_adet_pos", "face_adet_neg",
              "body_ip_scale", "body_denoise", "body_cfg", "body_cn_strength",
              "adetailer", "body_adet_pos", "body_adet_neg"],
     "poses": ["ref_look_strength", "apply_body_to_poses"],

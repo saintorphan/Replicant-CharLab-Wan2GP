@@ -347,15 +347,21 @@ def run_adetailer(checkpoint_path, image_path, prompt, negative, sampler, schedu
     models_root = str(Path(SD_CHECKOUT) / "models")
     release_inpaint()  # free the diffusers IP-Adapter inpaint pipe first
     pipe = get_pipeline()
+    src = Image.open(image_path).convert("RGB")
+    orig_size = src.size
     with models.no_auto_download():
         pipe.load(checkpoint_path)
         proc = ADetailerProcessor(models_root)
         refined = proc.process(
-            Image.open(image_path).convert("RGB"), sd_pipeline=pipe,
+            src, sd_pipeline=pipe,
             base_prompt=prompt or "", base_neg_prompt=negative or "",
             base_steps=int(steps), base_cfg=float(cfg), sampler=sampler,
             scheduler=scheduler, clip_skip=int(clip_skip),
             prompt_override=prompt or "", neg_prompt_override=negative or "")
+    # ADetailer's full-res paste can enlarge the canvas to max(orig, inpaint_size)
+    # per axis, stretching a portrait wider — restore the original dimensions.
+    if refined is not None and refined.size != orig_size:
+        refined = refined.resize(orig_size, Image.LANCZOS)
     out = Path(out_dir) if out_dir else (paths.cache_dir() / "swap")
     out.mkdir(parents=True, exist_ok=True)
     f = out / f"adetail_{int(time.time())}.png"
