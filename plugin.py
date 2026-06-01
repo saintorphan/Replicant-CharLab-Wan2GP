@@ -49,6 +49,11 @@ class ReplicantCharLab(WAN2GPPlugin):
         self.request_component("main_tabs")
         self.request_component("refresh_form_trigger")
         self.request_global("get_current_model_settings")
+        # Native prompt enhancer (Qwen3.5 when enhancer_enabled in {3,4}).
+        # exec_prompt_enhancer_engine self-manages the GPU lock + model load/unload.
+        self.request_global("exec_prompt_enhancer_engine")
+        self.request_global("get_state_model_type")
+        self.request_global("get_model_def")
 
         self.add_tab(tab_id=PLUGIN_ID, label=PLUGIN_NAME,
                      component_constructor=self.create_ui)
@@ -84,10 +89,47 @@ class ReplicantCharLab(WAN2GPPlugin):
         gr.HTML(f"<style>{CSS}</style>")
         with gr.Column():
             ui = wizard.build_wizard()
+        self._wire_enhancer(ui)
         # Outputs refreshed when the tab is (re)selected; bounce target is main_tabs.
         self.on_tab_outputs = [self.main_tabs] if hasattr(self, "main_tabs") else None
         self._ui = ui
         return ui
+
+    def _wire_enhancer(self, ui):
+        """Wire the Prompt step's Enhance buttons to Wan2GP's native enhancer."""
+        prm = ui["components"]["prompt"]
+        if not all(hasattr(self, a) for a in
+                   ("exec_prompt_enhancer_engine", "get_state_model_type", "get_model_def", "state")):
+            return  # globals not injected (older host) — leave buttons inert
+
+        def _enhance(state, text, progress=gr.Progress()):
+            if not (text and text.strip()):
+                raise gr.Error("Enter or seed a prompt first.")
+            model_type = self.get_state_model_type(state)
+            model_def = self.get_model_def(model_type)
+            out = self.exec_prompt_enhancer_engine(
+                state, model_type, model_def,
+                "T",            # text-only enhancement mode
+                [text],         # original_prompts
+                [None],         # image_start
+                None,           # original_image_refs
+                True,           # is_image
+                False,          # audio_only
+                -1,             # seed
+                progress,
+                -1,             # override_profile
+                enhancer_kwargs={"image_prompt_type": "", "video_prompt_type": "",
+                                 "audio_prompt_type": ""},
+            )
+            if out and out[0]:
+                res = out[0]
+                return res[0] if isinstance(res, (list, tuple)) else res
+            return gr.update()
+
+        prm["enhance_pos"].click(_enhance, inputs=[self.state, prm["positive_prompt"]],
+                                 outputs=[prm["positive_prompt"]])
+        prm["enhance_neg"].click(_enhance, inputs=[self.state, prm["negative_prompt"]],
+                                 outputs=[prm["negative_prompt"]])
 
 
 Plugin = ReplicantCharLab
