@@ -77,8 +77,13 @@ def build_base(visible: bool):
         with gr.Row():
             c["count"] = gr.Slider(1, 8, value=4, step=1, label="Candidates")
             c["generate"] = gr.Button("Generate candidates", variant="primary", scale=2)
-        c["candidates"] = gr.Gallery(label="Candidates — click to select", columns=4, height=260)
-        c["selected_base"] = gr.Image(label="Selected base", type="filepath", height=260)
+        with gr.Row():
+            with gr.Column(scale=2):
+                c["candidates"] = gr.Gallery(label="Candidates — click to select",
+                                             columns=3, height=420)
+            with gr.Column(scale=1):
+                c["selected_base"] = gr.Image(label="Selected base", type="filepath",
+                                              height=420)
     return g, c
 
 
