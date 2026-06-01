@@ -26,8 +26,7 @@ button.replicant-tabbtn {
 #replicant-header #replicant-banner img { width: 100%; max-width: 100%; height: auto;
     margin: 0 auto; display: block; }
 .replicant-taglines { display: flex; flex-direction: column; justify-content: center;
-    align-items: center; gap: 22px; height: 100%; text-align: center;
-    margin-left: -40px; }  /* nudge left, out of the column toward the banner */
+    align-items: center; gap: 44px; height: 100%; text-align: center; }
 .replicant-tagline { font-size: 1.5em; font-weight: 700; font-style: italic;
     line-height: 1.25; color: #ff5fa2; }
 

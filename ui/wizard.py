@@ -47,9 +47,9 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
         with gr.Column(scale=3):
             gr.HTML('<div class="replicant-taglines">'
                     '<div class="replicant-tagline">&ldquo;Create character LoRAs '
-                    'from a single image!&rdquo;</div>'
+                    'from a<br>single image!&rdquo;</div>'
                     '<div class="replicant-tagline">&ldquo;Actually, yes&mdash; we DO '
-                    'support SDXL!&rdquo;</div>'
+                    'support<br>SDXL!&rdquo;</div>'
                     '</div>')
         with gr.Column(scale=6):
             gr.HTML(_banner_html())
