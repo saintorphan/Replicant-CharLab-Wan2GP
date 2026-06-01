@@ -9,3 +9,5 @@ onnxruntime-gpu
 
 # BiRefNet (body-swap segmentation) custom modeling code needs kornia
 kornia
+controlnet_aux  # OpenPose preprocessor (body swap)
+ultralytics     # YOLOv8 (ADetailer / person detection)

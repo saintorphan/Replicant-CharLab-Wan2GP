@@ -166,6 +166,8 @@ def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
     (auto-downloaded). Returns the result image path."""
     import os
     from PIL import Image
+    from . import deps
+    deps.ensure_body_swap()  # auto-install controlnet_aux / kornia / ultralytics if missing
     _import_pipeline_cls()  # ensure SD_CHECKOUT on sys.path
     from supremediffusion.core.image_pipeline import ImageGenerationPipeline
     from supremediffusion.config.project_config import ProjectConfig
