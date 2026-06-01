@@ -718,5 +718,14 @@ class ReplicantCharLab(WAN2GPPlugin):
         prm["enhance_neg"].click(_enhance, inputs=[self.state, prm["negative_prompt"]],
                                  outputs=[prm["negative_prompt"]])
 
+        # Cohesion subtab uses the same enhancer for its own prompts.
+        inp = ui["components"]["inpaint"]
+        inp["cohesion_enhance_pos"].click(
+            _enhance, inputs=[self.state, inp["cohesion_prompt"]],
+            outputs=[inp["cohesion_prompt"]])
+        inp["cohesion_enhance_neg"].click(
+            _enhance, inputs=[self.state, inp["cohesion_neg"]],
+            outputs=[inp["cohesion_neg"]])
+
 
 Plugin = ReplicantCharLab

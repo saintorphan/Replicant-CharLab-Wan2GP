@@ -256,6 +256,9 @@ def build_inpaint(visible: bool, init=None, lora_choices=None):
                                                  show_fullscreen_button=True, value=base_img)
                     c["cohesion_prompt"] = gr.Textbox(label="Positive prompt", lines=2)
                     c["cohesion_neg"] = gr.Textbox(label="Negative prompt", lines=1)
+                    with gr.Row():
+                        c["cohesion_enhance_pos"] = gr.Button("✨ Enhance positive")
+                        c["cohesion_enhance_neg"] = gr.Button("✨ Enhance negative")
                     c["cohesion_cfg"] = gr.Slider(0.15, 0.30, value=0.22, step=0.01,
                                                   label="CFG (override)")
                     c["cohesion_steps"] = gr.Slider(5, 15, value=10, step=1,
