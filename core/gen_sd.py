@@ -224,9 +224,12 @@ def _get_ip_inpaint(checkpoint_path):
     return pipe
 
 
-def head_excluded_body_mask(base_path, models_root, hair_up=2.0) -> "object":
-    """White = body to inpaint; black = whole head (face+hair) + background, kept.
-    Person via BiRefNet; head box = detected face dilated up/out, subtracted."""
+def head_excluded_body_mask(base_path, models_root, hair_up=2.0,
+                            exclude_hands=True) -> "object":
+    """White = body to inpaint; black = whole head (face+hair) + hands + background, kept.
+    Person via BiRefNet; head box = detected face dilated up/out, subtracted. Hands
+    (which the reference's pose can't supply) are detected via MediaPipe Pose and
+    carved out too, so e.g. hands-on-hips survive a differently-posed reference."""
     import os
     import numpy as np
     from PIL import Image
@@ -260,6 +263,37 @@ def head_excluded_body_mask(base_path, models_root, hair_up=2.0) -> "object":
             mask[hy1:hy2, hx1:hx2] = 0  # exclude the whole head from the inpaint region
     except Exception:
         logger.warning("head detection failed; inpainting the full person", exc_info=True)
+    if exclude_hands:
+        try:
+            from . import deps
+            deps.ensure({"mediapipe": "mediapipe"})  # hand landmarks
+            import cv2
+            import mediapipe as mp
+            bgr = cv2.imread(base_path)
+            H, W = mask.shape
+            with mp.solutions.pose.Pose(static_image_mode=True, model_complexity=2,
+                                        min_detection_confidence=0.3) as pose:
+                res = pose.process(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+            if res.pose_landmarks:
+                lm = res.pose_landmarks.landmark
+                # Per hand: wrist + pinky/index/thumb landmarks bound the hand.
+                for wrist, fingers in ((15, (17, 19, 21)), (16, (18, 20, 22))):
+                    pts = [(lm[i].x * W, lm[i].y * H) for i in (wrist, *fingers)
+                           if lm[i].visibility > 0.3]
+                    if len(pts) < 2:
+                        continue
+                    xs = [p[0] for p in pts]
+                    ys = [p[1] for p in pts]
+                    cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
+                    # Radius from hand spread, padded; floor relative to image size.
+                    spread = max(max(xs) - min(xs), max(ys) - min(ys))
+                    r = max(spread * 1.4, W * 0.06)
+                    x1, x2 = max(0, int(cx - r)), min(W, int(cx + r))
+                    y1, y2 = max(0, int(cy - r)), min(H, int(cy + r))
+                    mask[y1:y2, x1:x2] = 0  # keep hands from the base
+        except Exception:
+            logger.warning("hand detection failed; hands may be regenerated",
+                           exc_info=True)
     return Image.fromarray(mask, "L")
 
 
