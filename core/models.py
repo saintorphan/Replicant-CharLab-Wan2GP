@@ -118,7 +118,9 @@ REGISTRY: list[ModelSpec] = [
 ]
 
 # Models the body-swap path needs present (or it errors, not auto-downloads).
-BODY_SWAP_KEYS = ["birefnet", "openpose_annotator", "ip_adapter"]
+# Now an IP-Adapter masked inpaint (no ControlNet/openpose): BiRefNet (body mask),
+# buffalo_l (head detect), IP-Adapter (source appearance).
+BODY_SWAP_KEYS = ["birefnet", "buffalo_l", "ip_adapter"]
 
 
 def by_key(key: str) -> ModelSpec | None:

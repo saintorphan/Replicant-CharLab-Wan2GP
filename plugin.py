@@ -309,7 +309,7 @@ class ReplicantCharLab(WAN2GPPlugin):
             backend, ident = discovery.parse_model_value(model)
             if backend != "sd":
                 raise gr.Error("Body swap needs an SDXL/Pony/Illustrious model selected.")
-            self._require(models.BODY_SWAP_KEYS + ["controlnet_openpose_sdxl"], "Body swap")
+            self._require(models.BODY_SWAP_KEYS, "Body swap")
             self._release_faceswap()
             if not self.acquire_gpu(state):
                 raise gr.Error("GPU is busy.")

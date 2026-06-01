@@ -142,95 +142,139 @@ def generate_img2img(checkpoint_path, image_path, prompt, negative, width, heigh
     return saved
 
 
-class _ProjMgr:
-    """Minimal project manager for ImagePipeline — only get_project_path is used."""
-    def __init__(self, root):
-        self._root = Path(root)
+# ---- Shared IP-Adapter masked-inpaint identity transfer -------------------
+# One primitive for both: body swap (ref = source body) and pose identity
+# (ref = base). diffusers SDXL inpaint + IP-Adapter (plus, ViT-H). No ControlNet,
+# no pose copy, no sequential CPU offload.
+_inpaint_pipe = None
+_inpaint_ckpt = None
 
-    def get_project_path(self, name):
-        p = self._root / (name or "replicant")
-        p.mkdir(parents=True, exist_ok=True)
-        return p
+
+def release_inpaint():
+    global _inpaint_pipe, _inpaint_ckpt
+    _inpaint_pipe = None
+    _inpaint_ckpt = None
+    _free_torch()
+
+
+def _get_ip_inpaint(checkpoint_path):
+    global _inpaint_pipe, _inpaint_ckpt
+    if _inpaint_pipe is not None and _inpaint_ckpt == checkpoint_path:
+        return _inpaint_pipe
+    release_inpaint()
+    import torch
+    from diffusers import StableDiffusionXLInpaintPipeline
+    with models.no_auto_download():
+        pipe = StableDiffusionXLInpaintPipeline.from_single_file(
+            checkpoint_path, torch_dtype=torch.float16)
+        pipe.load_ip_adapter("h94/IP-Adapter", subfolder="sdxl_models",
+                             weight_name="ip-adapter-plus_sdxl_vit-h.safetensors")
+    try:
+        pipe.to("cuda")
+    except Exception:
+        pipe.enable_model_cpu_offload()
+    try:
+        pipe.vae.enable_slicing()
+        pipe.vae.enable_tiling()
+    except Exception:
+        pass
+    _inpaint_pipe, _inpaint_ckpt = pipe, checkpoint_path
+    return pipe
+
+
+def head_excluded_body_mask(base_path, models_root, hair_up=2.0) -> "object":
+    """White = body to inpaint; black = whole head (face+hair) + background, kept.
+    Person via BiRefNet; head box = detected face dilated up/out, subtracted."""
+    import os
+    import numpy as np
+    from PIL import Image
+    from supremediffusion.models.segmentation import (segment_foreground,
+                                                       release_segmentation_model)
+    from . import deps
+    deps.ensure({"kornia": "kornia"})  # BiRefNet modeling code
+    mp = segment_foreground(base_path, models_root)
+    release_segmentation_model()
+    _free_torch()
+    person = np.array(Image.open(mp).convert("L"))
+    try:
+        os.unlink(mp)
+    except Exception:
+        pass
+    mask = (person > 127).astype("uint8") * 255
+    try:
+        import cv2
+        from insightface.app import FaceAnalysis
+        app = FaceAnalysis(name="buffalo_l",
+                           providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+        app.prepare(ctx_id=0, det_size=(640, 640))
+        faces = app.get(cv2.imread(base_path))
+        if faces:
+            f = max(faces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
+            x1, y1, x2, y2 = (int(v) for v in f.bbox)
+            bw, bh = x2 - x1, y2 - y1
+            H, W = mask.shape
+            hx1, hx2 = max(0, int(x1 - bw * 0.6)), min(W, int(x2 + bw * 0.6))
+            hy1, hy2 = max(0, int(y1 - bh * hair_up)), min(H, int(y2 + bh * 0.25))
+            mask[hy1:hy2, hx1:hx2] = 0  # exclude the whole head from the inpaint region
+    except Exception:
+        logger.warning("head detection failed; inpainting the full person", exc_info=True)
+    return Image.fromarray(mask, "L")
+
+
+def ip_adapter_inpaint(checkpoint_path, target_path, reference_path, mask_image,
+                       prompt, negative, denoise=0.7, ip_scale=0.8, steps=30,
+                       cfg=6.0, seed=-1, out_dir=None, progress=None) -> str | None:
+    """Apply a reference identity onto the masked region of a target via IP-Adapter
+    inpaint. Returns the saved path."""
+    import random as _random
+    import time
+    import torch
+    from PIL import Image
+    if seed is None or int(seed) < 0:
+        seed = _random.randint(0, 2**31 - 1)
+    pipe = _get_ip_inpaint(checkpoint_path)
+    pipe.set_ip_adapter_scale(float(ip_scale))
+    target = Image.open(target_path).convert("RGB")
+    ref = Image.open(reference_path).convert("RGB")
+    w, h = target.size
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    gen = torch.Generator(device=dev).manual_seed(int(seed))
+    with models.no_auto_download():
+        img = pipe(prompt=prompt or "", negative_prompt=negative or "",
+                   image=target, mask_image=mask_image, ip_adapter_image=ref,
+                   strength=float(denoise), num_inference_steps=int(steps),
+                   guidance_scale=float(cfg), width=w, height=h, generator=gen).images[0]
+    out = Path(out_dir) if out_dir else (paths.cache_dir() / "swap")
+    out.mkdir(parents=True, exist_ok=True)
+    f = out / f"ipinpaint_{int(seed)}_{int(time.time())}.png"
+    try:
+        img.save(f)
+        return str(f)
+    except Exception:
+        logger.warning("failed saving ip-adapter inpaint", exc_info=True)
+        return None
 
 
 def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
               cn_strength=0.7, ip_scale=0.8, denoise=0.75, cfg=7.0, steps=30,
               seed=-1, sampler="DPM++ 3M SDE", scheduler="Karras",
               adetailer=True, progress=None) -> str | None:
-    """Body double: segment the person in the base, extract an openpose control
-    image, then inpaint a new body with the source person's identity (ControlNet
-    openpose + IP-Adapter faceid_plus). SD-family checkpoints only.
-
-    Ported from SupremeDiffusion's BodyDoubleWorker orchestration. Heavy: pulls
-    BiRefNet (segment), openpose annotator, ControlNet-openpose and IP-Adapter
-    (auto-downloaded). Returns the result image path."""
-    import os
-    from PIL import Image
-    from . import deps
-    deps.ensure_body_swap(progress)  # auto-install controlnet_aux/kornia/ultralytics if missing
-    _import_pipeline_cls()  # ensure SD_CHECKOUT on sys.path
-
+    """Transfer the source person's skin tone / body texture onto the base's body
+    (whole head excluded → face + hair preserved). No pose copy, no ControlNet —
+    an IP-Adapter masked inpaint. SD-family checkpoints only."""
     def _say(frac, msg):
         if progress is not None:
             try:
                 progress(frac, desc=msg)
             except Exception:
                 pass
-    from supremediffusion.core.image_pipeline import ImageGenerationPipeline
-    from supremediffusion.config.project_config import ProjectConfig
-    from supremediffusion.models.segmentation import (segment_foreground,
-                                                       release_segmentation_model)
-    from supremediffusion.models.controlnet_types import (run_preprocessor,
-                                                          preprocessor_overrides_for)
-
+    _import_pipeline_cls()
     models_root = str(Path(SD_CHECKOUT) / "models")
-    cfg_obj = ProjectConfig()
-    cfg_obj.bodydouble_checkpoint = checkpoint_path
-    cfg_obj.bodydouble_controlnet_type = "openpose"
-    cfg_obj.bodydouble_controlnet_strength = float(cn_strength)
-    cfg_obj.bodydouble_ip_adapter_variant = "faceid_plus"
-    cfg_obj.bodydouble_ip_adapter_scale = float(ip_scale)
-    cfg_obj.bodydouble_denoising_strength = float(denoise)
-    cfg_obj.bodydouble_cfg_scale = float(cfg)
-    cfg_obj.bodydouble_steps = int(steps)
-    cfg_obj.bodydouble_sampler = sampler or "DPM++ 3M SDE"
-    cfg_obj.bodydouble_scheduler = scheduler or "Karras"
-    cfg_obj.bodydouble_prompt = prompt or ""
-    cfg_obj.bodydouble_negative_prompt = negative or ""
-    cfg_obj.bodydouble_seed = int(seed)
-    # ADetailer face restore on the result (best-effort; honored if the pipeline reads it).
-    cfg_obj.bodydouble_adetailer = bool(adetailer)
-    cfg_obj.adetailer = bool(adetailer)
-
-    with models.no_auto_download():  # never silently pull BiRefNet/ControlNet/IP-Adapter
-        release_sd()  # free the txt2img checkpoint so BiRefNet/body-double fit
-        _say(0.15, "Segmenting the person (BiRefNet)…")
-        mask = segment_foreground(base_path, models_root)
-        release_segmentation_model()  # free BiRefNet before the SD body-double loads
-        _free_torch()
-        try:
-            _say(0.4, "Extracting pose (OpenPose)…")
-            target_img = Image.open(base_path).convert("RGB")
-            control = [run_preprocessor("openpose", target_img,
-                                        **preprocessor_overrides_for("openpose", cfg_obj))]
-            _say(0.6, "Generating body double (ControlNet + IP-Adapter)…")
-            facade = ImageGenerationPipeline(get_pipeline(), _ProjMgr(paths.cache_dir() / "body_swap"))
-            results = facade.run_body_double(
-                project_name="replicant", target_image=base_path, mask=mask,
-                source_person=source_person_path, control_images=control,
-                config=cfg_obj, num_images=1)
-            return results[0] if results else None
-        finally:
-            try:
-                os.unlink(mask)
-            except Exception:
-                pass
-            try:  # free body-double controlnet/ip-adapter VRAM for the next step
-                p = get_pipeline()
-                if hasattr(p, "unload_body_double"):
-                    p.unload_body_double()
-                if hasattr(p, "unload_controlnet"):
-                    p.unload_controlnet()
-            except Exception:
-                pass
-            _free_torch()
+    release_sd()  # free the txt2img checkpoint
+    _say(0.2, "Segmenting body (head excluded)…")
+    mask = head_excluded_body_mask(base_path, models_root)
+    _say(0.55, "Applying source skin/texture (IP-Adapter inpaint)…")
+    return ip_adapter_inpaint(checkpoint_path, base_path, source_person_path, mask,
+                              prompt, negative, denoise=float(denoise),
+                              ip_scale=float(ip_scale), steps=int(steps),
+                              cfg=float(cfg), seed=int(seed), progress=progress)
