@@ -418,24 +418,41 @@ def _wire_load_save(comps, settings, poses_state):
             steps=int(steps), cfg_scale=float(cfg), seed=int(seed),
             width=int(width), height=int(height))
         cdir = paths.character_dir(name)
-        character.save_character(cdir, cs)
+        character.save_character(cdir, cs)  # params + images -> characters/<name>/
         msg = f"✅ Saved to `{cdir}`"
-        if cs.approved_poses:
-            try:
-                progress(0.5, desc="Building LoRA datasets…")
-                gen_sd.release_sd()  # free any resident SD model before crop detection
-                ddir = paths.character_dataset_dir(name)
-                datasets.build_character_datasets(ddir, cs)
-                gen_sd._free_torch()  # release the crop detector's VRAM afterward
-                msg += f" · datasets built at `{ddir}`"
-            except Exception:
-                msg += " · ⚠️ dataset build failed (see console)"
-                traceback.print_exc()
         gr.Info(msg)
         return msg, _summary(cs, cdir)
 
     save["save"].click(_save, inputs=save_inputs,
                        outputs=[save["save_status"], save["summary"]])
+
+    # --- Build LoRA datasets (Train page tool; loads the saved character) -------
+    train = comps["train"]
+
+    def _build_datasets(name, progress=gr.Progress()):
+        if not (name and name.strip()):
+            raise gr.Error("Enter a name and Save the character first.")
+        cdir = paths.character_dir(name)
+        if not (cdir / "character.json").is_file():
+            raise gr.Error("Save the character first (header → Save Character).")
+        cs = character.load_character(cdir)
+        if not cs.approved_poses:
+            raise gr.Error("No approved poses — generate/approve poses on ⑤ Replicate first.")
+        try:
+            progress(0.3, desc="Building LoRA datasets…")
+            gen_sd.release_sd()  # free any resident SD model before crop detection
+            ddir = paths.character_dataset_dir(name)
+            datasets.build_character_datasets(ddir, cs)
+            gen_sd._free_torch()  # release the crop detector's VRAM afterward
+        except Exception:
+            traceback.print_exc()
+            raise gr.Error("Dataset build failed — see console.")
+        gr.Info("LoRA datasets built.")
+        return f"✅ Datasets built at `{ddir}`"
+
+    if train.get("build_datasets") is not None:
+        train["build_datasets"].click(_build_datasets, inputs=[info["name"]],
+                                      outputs=[train["dataset_status"]])
 
     # --- Load: button opens a popup picker; picking guards on unsaved work -------
     popup = info["load_popup"]

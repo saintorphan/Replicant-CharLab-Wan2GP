@@ -287,15 +287,21 @@ def build_poses(visible: bool, init=None):
 def build_train(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ⑥ Datasets & Training")
-        gr.Markdown("<sub>**Save Character** (header) saves the character and builds the "
-                    "LoRA datasets. Then train: the low-VRAM preset is auto-selected from "
-                    "your Wan2GP profile (override below) and the generation model is "
-                    "unloaded first to free VRAM.</sub>")
+        gr.Markdown("<sub>**Save Character** (header) writes the character + images to its "
+                    "own folder. Then **Build LoRA datasets** here, and train — the low-VRAM "
+                    "preset is auto-selected from your Wan2GP profile (override below) and "
+                    "the generation model is unloaded first to free VRAM.</sub>")
         c = {}
-        # Save / dataset summary (relocated here from the old Save page).
+        # Save summary (relocated here from the old Save page).
         c["summary"] = gr.Markdown("_Fill in the earlier steps, then **Save Character** "
-                                   "in the header; the save + dataset summary appears here._")
+                                   "in the header; the save summary appears here._")
         c["save_status"] = gr.Markdown()
+        # Dataset creation tool.
+        gr.Markdown("#### Datasets")
+        c["build_datasets"] = gr.Button("🧱 Build LoRA datasets (from saved poses)",
+                                        variant="primary")
+        c["dataset_status"] = gr.Markdown()
+        gr.Markdown("#### Training")
         with gr.Row():
             c["dataset"] = gr.Radio(["video512", "highres", "full", "face"],
                                     value="video512", label="Dataset")
