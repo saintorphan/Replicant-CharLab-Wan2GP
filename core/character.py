@@ -54,6 +54,32 @@ def build_seed_prompt(description: str, style: str = "realism") -> str:
     return ", ".join(p for p in parts if p)
 
 
+# Individual framing clauses (from BASE_FRAMING) that lock the shot to a standing
+# full-body front view. They belong on the BASE image, but must NOT ride along
+# into per-pose prompts — otherwise every pose (sitting, kneeling, close-up, …) is
+# dragged back to a standing full-body shot.
+_FRAMING_CLAUSES = (
+    "full body photo", "facing the viewer", "standing front view",
+    "head to toe", "entire body visible", "wide shot", "full body shot",
+)
+
+
+def strip_base_framing(prompt: str) -> str:
+    """Remove the base-image framing clauses from a prompt so it can be reused for
+    pose generation (the per-pose description supplies the framing). Keeps the
+    character description AND 'solo, one person' (the latter still helps suppress
+    extra people in the pose shots). Comma-aware."""
+    import re
+    if not prompt:
+        return prompt
+    out = prompt
+    for clause in _FRAMING_CLAUSES:  # NB: not "solo, one person" — that's kept
+        out = re.sub(rf"(?i)\b{re.escape(clause)}\b", "", out)
+    out = re.sub(r"\s*,\s*(?:,\s*)+", ", ", out)   # collapse empty comma slots
+    out = re.sub(r"\s{2,}", " ", out)
+    return out.strip().strip(",").strip()
+
+
 def caption_for(trigger: str, distance: str, angle: str, desc: str) -> str:
     """Trigger-first caption with distance + angle tags, then the description."""
     parts = [trigger, DISTANCE_TAG.get(distance, "full body shot"),

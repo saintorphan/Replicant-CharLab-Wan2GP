@@ -1042,6 +1042,11 @@ class ReplicantCharLab(WAN2GPPlugin):
             adet = _pose_adet(pose_face_adet, pfa_pos, pfa_neg,
                               pose_body_adet, pba_pos, pba_neg, backend)
             P = poses.POSES
+            # Replicate OVERRIDES the base prompt's framing: the base prompt carries
+            # "standing front, full body, head to toe" to keep the BASE image a clean
+            # reference, but here each pose's own description supplies the framing —
+            # so strip the base framing or every pose snaps back to standing.
+            base_clean = character.strip_base_framing(pos)
 
             # Pass 1 — generate every pose with ONLY the generator resident
             # (face-swap models released first so the SD model has the whole GPU).
@@ -1060,7 +1065,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 progress((i, len(P)), desc=f"Generating pose {i + 1}/{len(P)} ({ps.distance}/{ps.angle})")
                 pw, ph = (max(width, height), min(width, height)) if ps.orientation == "landscape" \
                     else (min(width, height), max(width, height))
-                p_pos = f"{pos}, {ps.description}"
+                p_pos = f"{base_clean}, {ps.description}"
                 p_neg = poses.pose_negative_for(ps.distance, neg)
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
                 gen_sd.set_current_index(i)
@@ -1150,6 +1155,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 self._require(["inswapper_128", "buffalo_l"], "Pose face swap")
             specs = (pstate or {}).get("specs", [])
             P = poses.POSES
+            base_clean = character.strip_base_framing(pos)  # see _gen_poses
             final = list(cur)
             to_swap = []  # (orig_index, new_base_img, spec)
             gen_sd.clear_abort()  # fresh abort state for this batch
@@ -1165,15 +1171,21 @@ class ReplicantCharLab(WAN2GPPlugin):
                     final[i] = gen_sd.sharpen(img)
                     continue
                 gen_sd.set_current_index(i)
-                spec = specs[i] if i < len(specs) else \
-                    (P[i].__dict__ if i < len(P) else
-                     {"distance": "full", "angle": "front", "orientation": "portrait"})
-                desc = next((p.description for p in P if p.distance == spec.get("distance")
-                             and p.angle == spec.get("angle")), "")
-                p_pos = f"{pos}, {desc}" if desc else pos
-                p_neg = poses.pose_negative_for(spec.get("distance", "full"), neg)
+                # Use THIS slot's pose (index i ↔ P[i]) — NOT a distance+angle lookup,
+                # which collided (many poses share full/front) and re-rolled sitting/
+                # kneeling/close poses as the first standing match.
+                ps = P[i] if i < len(P) else None
+                spec = (specs[i] if i < len(specs)
+                        else ({"distance": ps.distance, "angle": ps.angle,
+                               "orientation": ps.orientation} if ps else
+                              {"distance": "full", "angle": "front", "orientation": "portrait"}))
+                desc = ps.description if ps else ""
+                p_pos = f"{base_clean}, {desc}" if desc else base_clean
+                p_neg = poses.pose_negative_for(
+                    (ps.distance if ps else spec.get("distance", "full")), neg)
+                orientation = ps.orientation if ps else spec.get("orientation")
                 pw, ph = (max(width, height), min(width, height)) \
-                    if spec.get("orientation") == "landscape" \
+                    if orientation == "landscape" \
                     else (min(width, height), max(width, height))
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
                 img2img = choice in ("Cohesion (img2img)", "Re-Roll (img2img)")
