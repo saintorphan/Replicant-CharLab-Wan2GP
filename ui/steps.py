@@ -322,6 +322,8 @@ def build_poses(visible: bool, init=None):
         with gr.Row():
             c["generate"] = gr.Button("Generate poses", variant="primary")
             c["rerun"] = gr.Button("↻ Re-run poses (apply dropdowns)", variant="primary")
+            c["abort_all"] = gr.Button("⛔ Abort all", variant="stop", scale=0,
+                                       min_width=120)
         gr.Markdown("<sub>Per pose: **Approve** keeps it · **Sharpen (no upscale)** = crisp "
                     "the whole image (no model) · **Cohesion (img2img)** = gentle low-CFG "
                     "cleanup · **Re-Roll (img2img)** = heavier re-roll · **Regenerate "
@@ -330,6 +332,7 @@ def build_poses(visible: bool, init=None):
         # Fixed grid: one (image + dropdown + color-match) slot per pose.
         saved = (init or {}).get("poses.pose_gallery") or []
         c["pose_imgs"], c["pose_choices"], c["pose_color"] = [], [], []
+        c["pose_abort"] = []
         for r in range(0, n, 4):
             with gr.Row():
                 for idx in range(r, min(r + 4, n)):
@@ -338,16 +341,20 @@ def build_poses(visible: bool, init=None):
                                        show_label=False, show_fullscreen_button=True,
                                        value=(saved[idx] if idx < len(saved) and
                                               os.path.isfile(str(saved[idx])) else None))
-                        dd = gr.Dropdown(["Approve", "Sharpen (no upscale)",
-                                          "Cohesion (img2img)", "Re-Roll (img2img)",
-                                          "Regenerate (txt2img)"],
-                                         value="Re-Roll (img2img)", container=False,
-                                         show_label=False)
+                        with gr.Row():
+                            dd = gr.Dropdown(["Approve", "Sharpen (no upscale)",
+                                              "Cohesion (img2img)", "Re-Roll (img2img)",
+                                              "Regenerate (txt2img)"],
+                                             value="Re-Roll (img2img)", container=False,
+                                             show_label=False, scale=5)
+                            ab = gr.Button("⛔", variant="stop", scale=0, min_width=40,
+                                           elem_classes="replicant-pose-abort")
                         cm = gr.Checkbox(value=False, label="Color match",
                                          container=False)
                         c["pose_imgs"].append(img)
                         c["pose_choices"].append(dd)
                         c["pose_color"].append(cm)
+                        c["pose_abort"].append(ab)
     return g, c
 
 

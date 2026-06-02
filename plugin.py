@@ -1001,28 +1001,44 @@ class ReplicantCharLab(WAN2GPPlugin):
             # Pass 1 — generate every pose with ONLY the generator resident
             # (face-swap models released first so the SD model has the whole GPU).
             self._release_faceswap()
+            gen_sd.clear_abort()  # fresh abort state for this batch
             raw = []
             for i, ps in enumerate(P):
+                spec = {"distance": ps.distance, "angle": ps.angle,
+                        "orientation": ps.orientation}
+                if gen_sd.was_aborted():  # master abort → stop the whole batch
+                    raw.append((None, spec))
+                    continue
+                if gen_sd.should_skip(i):  # this pose individually aborted → skip
+                    raw.append((None, spec))
+                    continue
                 progress((i, len(P)), desc=f"Generating pose {i + 1}/{len(P)} ({ps.distance}/{ps.angle})")
                 pw, ph = (max(width, height), min(width, height)) if ps.orientation == "landscape" \
                     else (min(width, height), max(width, height))
                 p_pos = f"{pos}, {ps.description}"
                 p_neg = poses.pose_negative_for(ps.distance, neg)
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
+                gen_sd.set_current_index(i)
                 imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps, cfg,
                                        sd, sampler, scheduler, clip_skip,
                                        loras=loras, lora_mult=lora_mult)
-                raw.append((imgs[0] if imgs else None,
-                            {"distance": ps.distance, "angle": ps.angle,
-                             "orientation": ps.orientation}))
+                # Interrupted mid-gen (master or this pose) → discard the partial.
+                img = None if gen_sd.should_skip(i) else (imgs[0] if imgs else None)
+                raw.append((img, spec))
 
             out = paths.cache_dir() / "poses"
-            # Keep all N slots aligned (None for any that failed to generate).
-            gallery, specs = self._pose_swaps(
-                state, ident, raw, pos, neg, do_body, body_src, body_ip_scale,
-                body_denoise, apply_face, face_src, out, progress, adet=adet)
+            # On a master abort, skip the (slow) swap pass and keep the raw gens.
+            if gen_sd.was_aborted():
+                gallery = [im for im, _ in raw]
+                specs = [sp for _, sp in raw]
+            else:
+                # Keep all N slots aligned (None for any that failed to generate).
+                gallery, specs = self._pose_swaps(
+                    state, ident, raw, pos, neg, do_body, body_src, body_ip_scale,
+                    body_denoise, apply_face, face_src, out, progress, adet=adet)
             if not any(gallery):
-                raise gr.Error("No poses were generated.")
+                raise gr.Error("Aborted — no poses generated." if gen_sd.was_aborted()
+                               else "No poses were generated.")
             saved = self._persist_poses(gallery, specs)
             return saved + [{"poses": saved, "specs": specs}]
 
@@ -1035,6 +1051,30 @@ class ReplicantCharLab(WAN2GPPlugin):
                                         pose["pose_body_adet"], pose["pose_body_adet_pos"],
                                         pose["pose_body_adet_neg"]]
         pose_out = pose["pose_imgs"] + [ui["poses_state"]]
+
+        # -- Replicate aborts: master (stop the batch) + per-pose (skip/interrupt one) --
+        def _abort_all():
+            gen_sd.request_abort()
+            try:
+                self._api.cancel()  # interrupt a running native pose (Wan2GP queue)
+            except Exception:
+                pass
+            gr.Info("Aborting — finishing/cancelling the current pose…")
+
+        pose["abort_all"].click(_abort_all, None, None)
+
+        def _make_pose_abort(i):
+            def _h():
+                gen_sd.request_skip(i)
+                if gen_sd.current_index() == i:  # this pose is in-flight → cancel native too
+                    try:
+                        self._api.cancel()
+                    except Exception:
+                        pass
+            return _h
+        for _i, _btn in enumerate(pose["pose_abort"]):
+            _btn.click(_make_pose_abort(_i), None, None)
+
         pose["generate"].click(_gen_poses, inputs=pose_in, outputs=pose_out)
 
         _N = len(poses.POSES)
@@ -1067,13 +1107,19 @@ class ReplicantCharLab(WAN2GPPlugin):
             P = poses.POSES
             final = list(cur)
             to_swap = []  # (orig_index, new_base_img, spec)
+            gen_sd.clear_abort()  # fresh abort state for this batch
             for i, img in enumerate(cur):
+                if gen_sd.was_aborted():  # master abort → stop re-running the rest
+                    break
                 choice = choices[i] if i < len(choices) else "Approve"
                 if choice == "Approve" or not img:
                     continue  # keep as-is (already swapped) / nothing to reroll
+                if gen_sd.should_skip(i):  # this pose individually aborted → keep as-is
+                    continue
                 if choice == "Sharpen (no upscale)":  # whole-image crisp, no model/regen
                     final[i] = gen_sd.sharpen(img)
                     continue
+                gen_sd.set_current_index(i)
                 spec = specs[i] if i < len(specs) else \
                     (P[i].__dict__ if i < len(P) else
                      {"distance": "full", "angle": "front", "orientation": "portrait"})
@@ -1122,8 +1168,11 @@ class ReplicantCharLab(WAN2GPPlugin):
                         new = outs[0] if outs else img
                     else:
                         new = img
+                if gen_sd.should_skip(i):  # interrupted mid-gen → keep the original
+                    continue
                 to_swap.append((i, new, spec))
-            if to_swap:
+            # On a master abort, skip the (slow) swap pass; persist what's done.
+            if to_swap and not gen_sd.was_aborted():
                 items = [(im, sp) for (_, im, sp) in to_swap]
                 swapped, _ = self._pose_swaps(
                     state, ident, items, pos, neg, do_body, body_src, body_ip_scale,

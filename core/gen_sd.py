@@ -188,7 +188,8 @@ def generate_txt2img(checkpoint_path, prompt, negative, width, height, steps, cf
             prompt=prompt, negative_prompt=negative or "",
             width=int(width), height=int(height), steps=int(steps),
             cfg_scale=float(cfg), seed=int(seed), sampler=sampler, scheduler=scheduler,
-            batch_size=int(batch_size), clip_skip=int(clip_skip), callback=callback,
+            batch_size=int(batch_size), clip_skip=int(clip_skip),
+            callback=callback or _abort_callback,  # armed so a batch abort interrupts
         )
     out = Path(out_dir) if out_dir else (paths.cache_dir() / "sd_gen")
     out.mkdir(parents=True, exist_ok=True)
@@ -218,7 +219,8 @@ def generate_img2img(checkpoint_path, image_path, prompt, negative, width, heigh
             image=image_path, prompt=prompt, negative_prompt=negative or "",
             denoising_strength=float(denoise), width=int(width), height=int(height),
             steps=int(steps), cfg_scale=float(cfg), seed=int(seed), sampler=sampler,
-            scheduler=scheduler, batch_size=int(batch_size), clip_skip=int(clip_skip))
+            scheduler=scheduler, batch_size=int(batch_size), clip_skip=int(clip_skip),
+            callback=_abort_callback)  # armed so a batch abort interrupts
     out = Path(out_dir) if out_dir else (paths.cache_dir() / "sd_gen")
     out.mkdir(parents=True, exist_ok=True)
     saved = []
@@ -295,27 +297,59 @@ _inpaint_pipe = None
 _inpaint_ckpt = None
 _inpaint_with_ip = None
 
-# Cooperative abort: the UI sets the flag; the diffusers step callback below trips
-# the pipeline's _interrupt so the denoising loop bails out early.
+# Cooperative abort: the UI sets the flag(s); the diffusers step callback below
+# trips the pipeline's _interrupt so the denoising loop bails out early.
+#   _abort_flag  — master abort: stop the whole batch.
+#   _skip_set    — per-item abort: indices to skip; interrupts the one in-flight.
+#   _current_idx — the batch item currently generating (set by the loop).
 _abort_flag = False
+_skip_set: set[int] = set()
+_current_idx = -1
 
 
 def request_abort():
+    """Master abort — stop the whole batch."""
     global _abort_flag
     _abort_flag = True
 
 
+def request_skip(index):
+    """Per-item abort — skip item ``index`` (interrupts it if in-flight)."""
+    _skip_set.add(int(index))
+
+
 def clear_abort():
-    global _abort_flag
+    """Reset all abort state — call at the start of each batch run."""
+    global _abort_flag, _current_idx
     _abort_flag = False
+    _current_idx = -1
+    _skip_set.clear()
+
+
+def set_current_index(index):
+    """The loop calls this before generating each item, so the step callback can
+    interrupt the in-flight item when it gets individually aborted."""
+    global _current_idx
+    _current_idx = int(index)
+
+
+def current_index() -> int:
+    return _current_idx
 
 
 def was_aborted() -> bool:
     return _abort_flag
 
 
+def should_skip(index) -> bool:
+    """True if item ``index`` should be skipped — master abort or its own skip."""
+    return _abort_flag or int(index) in _skip_set
+
+
 def _abort_callback(pipe, step, timestep, kwargs):
-    if _abort_flag:
+    # Interrupt the denoising loop on a master abort or when THIS item (the one
+    # currently generating) has been individually aborted.
+    if _abort_flag or (_current_idx >= 0 and _current_idx in _skip_set):
         pipe._interrupt = True
     return kwargs
 
