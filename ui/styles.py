@@ -29,11 +29,11 @@ button.replicant-tabbtn {
 #replicant-bannercol #replicant-banner { margin-bottom: 0 !important; }
 .replicant-ghlink a { color: #e83e8c; text-decoration: none; }
 .replicant-ghlink a:hover { text-decoration: underline; }
-#replicant-header #replicant-banner { margin: 0; text-align: center; }
-/* Stretched to fill the column width at a fixed height (intentionally wider than
-   the native 4.03:1 ratio — wider, not taller). */
-#replicant-header #replicant-banner img { width: 100%; max-width: 100%; height: 175px;
-    object-fit: fill; margin: 0 auto; display: block; }
+/* Far-left, aspect-correct logo (1580x392, ~4.03:1) — no stretch, height-capped. */
+#replicant-header #replicant-banner { margin: 0; text-align: left; }
+#replicant-header #replicant-banner img { width: auto; max-width: 100%; height: auto;
+    max-height: 130px; object-fit: contain; margin: 0; display: block; }
+#replicant-header .replicant-ghlink { text-align: left; }
 .replicant-taglines { display: flex; flex-direction: column; justify-content: center;
     align-items: center; gap: 44px; height: 100%; text-align: center; }
 .replicant-tagline { font-size: 1.3em; font-weight: 700; font-style: italic;
