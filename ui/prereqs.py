@@ -104,7 +104,8 @@ def build_prereqs():
                              ("SDXL LoRAs", "sdxl_loras"),
                              ("Face / swap weights", "face"),
                              ("ADetailer / person-seg (body)", "body"),
-                             ("BiRefNet (body-swap seg)", "birefnet")],
+                             ("BiRefNet (body-swap seg)", "birefnet"),
+                             ("InsightFace buffalo_l (face detect)", "buffalo_l")],
                     scale=2)
                 link_btn = gr.Button("🔗 Link", scale=1)
             link_status = gr.Markdown()
