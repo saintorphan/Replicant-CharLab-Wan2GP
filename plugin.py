@@ -187,11 +187,33 @@ class ReplicantCharLab(WAN2GPPlugin):
         raise gr.Error("Select a model from the dropdown first.")
 
     def _pose_swaps(self, state, ident, items, pos, neg, do_body, body_src, body_ip,
-                    body_den, apply_face, face_src, out, progress, start_idx=0):
-        """Apply body double (head excluded) then face swap to each (img, spec).
-        Body runs first so the swapped face survives. Returns (gallery, specs)."""
+                    body_den, apply_face, face_src, out, progress, start_idx=0, adet=None):
+        """Order per pose: body double → body ADetailer (person) → face swap → face
+        ADetailer (face). Body-before-face so the swapped face survives; ADetailer for
+        each region uses its own model. ``adet`` (optional) = the Replicate tab's
+        settings dict: face/face_pos/face_neg/body/body_pos/body_neg. Returns (gallery, specs)."""
         from pathlib import Path
         out = Path(out); out.mkdir(parents=True, exist_ok=True)
+        ad = adet or {}
+
+        def _adet_pass(seq, detector, ppos, pneg, label):
+            res = []
+            for i, (img, spec) in enumerate(seq):
+                final = img
+                if img is not None:
+                    progress((i, len(seq)), desc=f"{label} {i + 1}/{len(seq)}")
+                    if self.acquire_gpu(state):
+                        try:
+                            r = gen_sd.run_adetailer(ident, img, ppos or pos, pneg or neg,
+                                                     detector=detector)
+                            final = r or img
+                        except Exception:
+                            traceback.print_exc()
+                        finally:
+                            self.release_gpu(state)
+                res.append((final, spec))
+            return res
+
         if do_body:
             gen_sd.release_sd(); self._release_faceswap()
             bodied = []
@@ -214,6 +236,11 @@ class ReplicantCharLab(WAN2GPPlugin):
                     traceback.print_exc()
                 bodied.append((final, spec))
             items = bodied
+        # Body ADetailer (person model) — before the face swap.
+        if ad.get("body"):
+            gen_sd.release_sd(); self._release_faceswap()
+            items = _adet_pass(items, "person", ad.get("body_pos"), ad.get("body_neg"),
+                               "Body ADetailer")
         gen_sd.release_sd()
         gallery, specs = [], []
         fp = self._face_pipe() if apply_face else None
@@ -232,7 +259,15 @@ class ReplicantCharLab(WAN2GPPlugin):
                 except Exception:
                     traceback.print_exc()
             gallery.append(final); specs.append(spec)
-        self._release_faceswap()  # leave the GPU clean for Save / Train
+        self._release_faceswap()
+        # Face ADetailer (face model) — after the face swap.
+        if ad.get("face"):
+            gen_sd.release_sd()
+            gallery = [g for g, _ in
+                       _adet_pass(list(zip(gallery, specs)), "face",
+                                  ad.get("face_pos"), ad.get("face_neg"), "Face ADetailer")]
+            self._release_faceswap()
+        gen_sd.release_sd()  # leave the GPU clean for Save / Train
         return gallery, specs
 
     def _persist_poses(self, gallery, specs):
@@ -684,9 +719,20 @@ class ReplicantCharLab(WAN2GPPlugin):
                                   outputs=[base["selected_base"]])
 
         # -- step 6: pose variants (+ mandatory base-face swap) --
+        def _pose_adet(fa, fpos, fneg, ba, bpos, bneg, backend):
+            """Build the ADetailer dict for poses + require its models (this tab's own)."""
+            ad = {"face": bool(fa), "face_pos": fpos, "face_neg": fneg,
+                  "body": bool(ba) and backend == "sd", "body_pos": bpos, "body_neg": bneg}
+            if ad["face"]:
+                self._require(["buffalo_l"], "Pose face ADetailer")
+            if ad["body"]:
+                self._require(["person_yolov8s_seg"], "Pose body ADetailer")
+            return ad
+
         def _gen_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
                        width, height, pos, neg, sel_base, face_mode, body_mode,
                        face_ref, body_ref, body_ip_scale, body_denoise,
+                       pose_face_adet, pfa_pos, pfa_neg, pose_body_adet, pba_pos, pba_neg,
                        progress=gr.Progress()):
             if not sel_base:
                 raise gr.Error("Generate/select a base image first (step 3).")
@@ -708,6 +754,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                 self._require(models.BODY_SWAP_KEYS, "Body double for poses")
             if apply_face:
                 self._require(["inswapper_128", "buffalo_l"], "Pose face swap")
+            adet = _pose_adet(pose_face_adet, pfa_pos, pfa_neg,
+                              pose_body_adet, pba_pos, pba_neg, backend)
             P = poses.POSES
 
             # Pass 1 — generate every pose with ONLY the generator resident
@@ -731,7 +779,7 @@ class ReplicantCharLab(WAN2GPPlugin):
             # Keep all N slots aligned (None for any that failed to generate).
             gallery, specs = self._pose_swaps(
                 state, ident, raw, pos, neg, do_body, body_src, body_ip_scale,
-                body_denoise, apply_face, face_src, out, progress)
+                body_denoise, apply_face, face_src, out, progress, adet=adet)
             if not any(gallery):
                 raise gr.Error("No poses were generated.")
             saved = self._persist_poses(gallery, specs)
@@ -741,7 +789,10 @@ class ReplicantCharLab(WAN2GPPlugin):
                                         base["selected_base"], pose["face_mode"],
                                         pose["body_mode"], swap["face_source"],
                                         swap["body_source"], swap["body_ip_scale"],
-                                        swap["body_denoise"]]
+                                        swap["body_denoise"], pose["pose_face_adet"],
+                                        pose["pose_face_adet_pos"], pose["pose_face_adet_neg"],
+                                        pose["pose_body_adet"], pose["pose_body_adet_pos"],
+                                        pose["pose_body_adet_neg"]]
         pose_out = pose["pose_imgs"] + [ui["poses_state"]]
         pose["generate"].click(_gen_poses, inputs=pose_in, outputs=pose_out)
 
@@ -749,8 +800,9 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         def _rerun_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
                          width, height, pos, neg, sel_base, face_mode, body_mode,
-                         face_ref, body_ref, body_ip_scale, body_denoise, *rest,
-                         progress=gr.Progress()):
+                         face_ref, body_ref, body_ip_scale, body_denoise,
+                         pose_face_adet, pfa_pos, pfa_neg, pose_body_adet, pba_pos, pba_neg,
+                         *rest, progress=gr.Progress()):
             cur = list(rest[:_N])
             choices = list(rest[_N:2 * _N])
             pstate = rest[2 * _N] if len(rest) > 2 * _N else {}
@@ -763,6 +815,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                 body_ref if body_mode == "Use Reference" else None)
             apply_face = bool(face_src)
             do_body = bool(body_src) and backend == "sd"
+            adet = _pose_adet(pose_face_adet, pfa_pos, pfa_neg,
+                              pose_body_adet, pba_pos, pba_neg, backend)
             if do_body:
                 self._require(models.BODY_SWAP_KEYS, "Body double for poses")
             if apply_face:
@@ -775,6 +829,9 @@ class ReplicantCharLab(WAN2GPPlugin):
                 choice = choices[i] if i < len(choices) else "Approve"
                 if choice == "Approve" or not img:
                     continue  # keep as-is (already swapped) / nothing to reroll
+                if choice == "Sharpen (no upscale)":  # whole-image crisp, no model/regen
+                    final[i] = gen_sd.sharpen(img)
+                    continue
                 spec = specs[i] if i < len(specs) else \
                     (P[i].__dict__ if i < len(P) else
                      {"distance": "full", "angle": "front", "orientation": "portrait"})
@@ -814,7 +871,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 swapped, _ = self._pose_swaps(
                     state, ident, items, pos, neg, do_body, body_src, body_ip_scale,
                     body_denoise, apply_face, face_src, paths.cache_dir() / "poses",
-                    progress, start_idx=1000)
+                    progress, start_idx=1000, adet=adet)
                 for (oi, _, _), sw in zip(to_swap, swapped):
                     final[oi] = sw
             saved = self._persist_poses(final, specs)

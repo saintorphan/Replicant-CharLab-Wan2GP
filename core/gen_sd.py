@@ -65,6 +65,26 @@ def _free_torch():
         pass
 
 
+def sharpen(image_path, radius=2.0, percent=120, threshold=3, out_dir=None) -> str:
+    """Crisp the WHOLE image without changing its resolution (PIL unsharp mask).
+    No model, no GPU, instant. Boosts edge contrast — keep params modest so it
+    doesn't ring/halo. (Don't run this on the post-downscale training export.)"""
+    import time
+    from PIL import Image, ImageFilter
+    try:
+        img = Image.open(image_path).convert("RGB").filter(
+            ImageFilter.UnsharpMask(radius=float(radius), percent=int(percent),
+                                    threshold=int(threshold)))
+        out = Path(out_dir) if out_dir else (paths.cache_dir() / "poses")
+        out.mkdir(parents=True, exist_ok=True)
+        f = out / f"sharp_{int(time.time() * 1000)}.png"
+        img.save(f)
+        return str(f)
+    except Exception:
+        logger.warning("sharpen failed", exc_info=True)
+        return image_path
+
+
 def release_sd():
     """Unload the cached SD txt2img pipeline + free its VRAM (the SDXL checkpoint
     is ~6.5GB). Call before a different heavy model needs the GPU."""
@@ -416,24 +436,65 @@ def _detect_face_boxes(image_path, threshold=0.4):
         return []
 
 
+def _detect_person_regions(image_path, threshold=0.3):
+    """Largest person via the gated person_yolov8s-seg model → [((x1,y1,x2,y2), L-mask)].
+    Returns [] if the model isn't downloaded (body-ADetailer then passes through)."""
+    try:
+        import numpy as np
+        import torch
+        from PIL import Image, ImageDraw
+        from ultralytics import YOLO
+        mp = paths.models_dir() / "body" / "person_yolov8s-seg.pt"
+        if not mp.is_file():
+            logger.info("person_yolov8s-seg.pt not downloaded — body ADetailer skipped.")
+            return []
+        src = Image.open(image_path).convert("RGB")
+        W, H = src.size
+        model = YOLO(str(mp))
+        dev = 0 if torch.cuda.is_available() else "cpu"
+        res = model.predict(np.array(src), conf=float(threshold), verbose=False, device=dev)[0]
+        boxes = res.boxes.xyxy.cpu().numpy() if res.boxes is not None else []
+        msk = res.masks.data.cpu().numpy() if getattr(res, "masks", None) is not None else None
+        out = []
+        for i, b in enumerate(boxes):
+            x1, y1, x2, y2 = (int(v) for v in b)
+            if msk is not None and i < len(msk):
+                m = Image.fromarray((msk[i] * 255).astype("uint8"), "L").resize((W, H))
+            else:
+                m = Image.new("L", (W, H), 0)
+                ImageDraw.Draw(m).rectangle((x1, y1, x2, y2), fill=255)
+            out.append(((x1, y1, x2, y2), m))
+        out.sort(key=lambda r: (r[0][2] - r[0][0]) * (r[0][3] - r[0][1]), reverse=True)
+        return out[:1]  # largest person only
+    except Exception:
+        logger.warning("ADetailer person detection failed", exc_info=True)
+        return []
+
+
 def run_adetailer(checkpoint_path, image_path, prompt, negative, sampler=None,
                   scheduler=None, steps=24, cfg=7.0, clip_skip=1, denoise=0.4,
-                  pad=0.35, out_dir=None) -> str | None:
-    """Detect faces and re-inpaint each at higher detail. Self-contained: InsightFace
-    detection + diffusers SDXL inpaint, crop → inpaint → feathered paste at full res
-    (no external SD checkout). Returns the refined path (or the original on no-op)."""
+                  pad=0.35, detector="face", out_dir=None) -> str | None:
+    """Detect a region (``detector`` = "face" via InsightFace, or "person" via the
+    gated person-seg YOLO) and re-inpaint it at higher detail. Self-contained:
+    diffusers SDXL inpaint, crop → inpaint → feathered paste at full res. Returns the
+    refined path (or the original on no-op)."""
     import time
     from PIL import Image, ImageDraw, ImageFilter
     src = Image.open(image_path).convert("RGB")
     W, H = src.size
-    boxes = _detect_face_boxes(image_path)
-    if not boxes:
-        logger.info("ADetailer: no faces detected; passing through.")
+    if detector == "person":
+        regions = _detect_person_regions(image_path)  # [((box), full-image mask)]
+        noun = "person"
+    else:
+        regions = [(b, None) for b in _detect_face_boxes(image_path)]
+        noun = "face"
+    if not regions:
+        logger.info("ADetailer(%s): nothing detected; passing through.", noun)
         return image_path
     release_sd()  # free the txt2img checkpoint
     pipe = _get_inpaint(checkpoint_path, with_ip=False)
     result = src.copy()
-    for (x1, y1, x2, y2) in boxes:
+    for (x1, y1, x2, y2), full_mask in regions:
         bw, bh = x2 - x1, y2 - y1
         px, py = bw * pad, bh * pad
         cx1, cy1 = max(0, int(x1 - px)), max(0, int(y1 - py))
@@ -442,10 +503,12 @@ def run_adetailer(checkpoint_path, image_path, prompt, negative, sampler=None,
         cw, ch = crop.size
         if cw < 16 or ch < 16:
             continue
-        # White over the (unpadded) face within the crop, feathered for a soft blend.
-        m = Image.new("L", (cw, ch), 0)
-        ImageDraw.Draw(m).rectangle(
-            (int(x1 - cx1), int(y1 - cy1), int(x2 - cx1), int(y2 - cy1)), fill=255)
+        if full_mask is not None:  # person: use the seg mask cropped to this region
+            m = full_mask.crop((cx1, cy1, cx2, cy2))
+        else:  # face: white rect over the (unpadded) face within the crop
+            m = Image.new("L", (cw, ch), 0)
+            ImageDraw.Draw(m).rectangle(
+                (int(x1 - cx1), int(y1 - cy1), int(x2 - cx1), int(y2 - cy1)), fill=255)
         m = m.filter(ImageFilter.GaussianBlur(radius=max(4, cw // 25)))
         # Inpaint at ~1024 on the long side, snapped to multiples of 8.
         scale = 1024.0 / max(cw, ch)
@@ -497,11 +560,12 @@ def body_swap(checkpoint_path, base_path, source_person_path, prompt, negative,
                              ip_scale=float(ip_scale), steps=int(steps),
                              cfg=float(cfg), seed=int(seed), progress=progress)
     if adetailer and res and not was_aborted():
-        _say(0.9, "ADetailer face refine…")
-        try:
+        _say(0.9, "ADetailer body refine…")
+        try:  # body swap → re-detail the BODY with the person model
             return run_adetailer(checkpoint_path, res,
                                  adet_prompt or prompt, adet_neg or negative,
-                                 sampler, scheduler, steps=int(steps), cfg=float(cfg))
+                                 sampler, scheduler, steps=int(steps), cfg=float(cfg),
+                                 detector="person")
         except Exception:
             logger.warning("ADetailer pass failed; returning un-refined body swap",
                            exc_info=True)

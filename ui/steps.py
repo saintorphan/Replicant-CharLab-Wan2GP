@@ -303,12 +303,29 @@ def build_poses(visible: bool, init=None):
             c["body_mode"] = gr.Radio(
                 ["None", "Use Base"] + (["Use Reference"] if body_ref else []),
                 value="None", label="Body double")
+        # ADetailer for poses — this tab's own settings (face uses the face model,
+        # body uses the person model). Independent of the Human Clone tab.
+        with gr.Row():
+            c["pose_face_adet"] = gr.Checkbox(value=False, label="ADetailer (face)", scale=0,
+                                              min_width=150)
+            c["pose_face_adet_pos"] = gr.Textbox(show_label=False, scale=2, lines=1,
+                                                 placeholder="face detail — positive")
+            c["pose_face_adet_neg"] = gr.Textbox(show_label=False, scale=2, lines=1,
+                                                 placeholder="face detail — negative")
+        with gr.Row():
+            c["pose_body_adet"] = gr.Checkbox(value=False, label="ADetailer (body)", scale=0,
+                                              min_width=150)
+            c["pose_body_adet_pos"] = gr.Textbox(show_label=False, scale=2, lines=1,
+                                                 placeholder="body detail — positive")
+            c["pose_body_adet_neg"] = gr.Textbox(show_label=False, scale=2, lines=1,
+                                                 placeholder="body detail — negative")
         with gr.Row():
             c["generate"] = gr.Button("Generate poses", variant="primary")
             c["rerun"] = gr.Button("↻ Re-run poses (apply dropdowns)", variant="primary")
-        gr.Markdown("<sub>Per pose: **Approve** keeps it · **Cohesion (img2img)** = gentle "
-                    "low-CFG cleanup · **Re-Roll (img2img)** = heavier re-roll from itself · "
-                    "**Regenerate (txt2img)** = fresh image.</sub>")
+        gr.Markdown("<sub>Per pose: **Approve** keeps it · **Sharpen (no upscale)** = crisp "
+                    "the whole image (no model) · **Cohesion (img2img)** = gentle low-CFG "
+                    "cleanup · **Re-Roll (img2img)** = heavier re-roll · **Regenerate "
+                    "(txt2img)** = fresh image.</sub>")
         # Fixed grid: one (image + dropdown) slot per pose.
         saved = (init or {}).get("poses.pose_gallery") or []
         c["pose_imgs"], c["pose_choices"] = [], []
@@ -320,8 +337,9 @@ def build_poses(visible: bool, init=None):
                                        show_label=False, show_fullscreen_button=True,
                                        value=(saved[idx] if idx < len(saved) and
                                               os.path.isfile(str(saved[idx])) else None))
-                        dd = gr.Dropdown(["Approve", "Cohesion (img2img)",
-                                          "Re-Roll (img2img)", "Regenerate (txt2img)"],
+                        dd = gr.Dropdown(["Approve", "Sharpen (no upscale)",
+                                          "Cohesion (img2img)", "Re-Roll (img2img)",
+                                          "Regenerate (txt2img)"],
                                          value="Re-Roll (img2img)", container=False,
                                          show_label=False)
                         c["pose_imgs"].append(img)

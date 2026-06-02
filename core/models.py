@@ -93,6 +93,11 @@ REGISTRY: list[ModelSpec] = [
               "Better face detection on tough angles.", required=False,
               subpath="face/face_yolov8s.pt",
               url="https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8s.pt"),
+    ModelSpec("person_yolov8s_seg", "ADetailer person_yolov8s-seg",
+              "Body detection/segmentation — lets body-ADetailer use a person model "
+              "(not the face model).", required=False,
+              subpath="body/person_yolov8s-seg.pt",
+              url="https://huggingface.co/Bingsu/adetailer/resolve/main/person_yolov8s-seg.pt"),
     ModelSpec("buffalo_l", "InsightFace buffalo_l (face detect)",
               "Face detection for swaps + dataset crops.", required=True,
               url="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip",

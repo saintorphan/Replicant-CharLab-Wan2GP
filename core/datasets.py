@@ -109,9 +109,26 @@ def crop_upper_body(image_path: str, out_path: str, detector) -> bool:
         return False
 
 
-def compose_dataset(pools: dict, out_dir: Path, ratio: dict, *, total: int | None = None) -> str:
+def _save_resized(src, dst, max_side: int | None):
+    """Save src->dst, downscaling so the long edge <= max_side (Lanczos, aspect kept).
+    Downsampling from the ~832x1216 generation supersamples away diffusion grain and
+    anti-aliases edges, so the training crop is crisper than a native-512 render."""
+    from PIL import Image
+    img = Image.open(src).convert("RGB")
+    if max_side:
+        w, h = img.size
+        if max(w, h) > max_side:
+            s = max_side / max(w, h)
+            img = img.resize((max(1, round(w * s)), max(1, round(h * s))),
+                             Image.Resampling.LANCZOS)
+    img.save(dst)
+
+
+def compose_dataset(pools: dict, out_dir: Path, ratio: dict, *, total: int | None = None,
+                    max_side: int | None = None) -> str:
     """Assemble a FLAT folder of NNN.png + NNN.txt sampled from per-distance pools
-    to hit ``ratio``. Oversamples (duplicates) a short pool, subsets a long one."""
+    to hit ``ratio``. Oversamples (duplicates) a short pool, subsets a long one.
+    ``max_side`` downscales the long edge (Lanczos) — e.g. 512 for the training set."""
     from PIL import Image
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -139,7 +156,7 @@ def compose_dataset(pools: dict, out_dir: Path, ratio: dict, *, total: int | Non
             n += 1
             dst = out_dir / f"{n:03d}.png"
             try:
-                Image.open(img).convert("RGB").save(dst)
+                _save_resized(img, dst, max_side)
             except Exception:
                 import shutil
                 shutil.copy2(img, dst)
@@ -208,8 +225,10 @@ def build_character_datasets(char_dir, cs: CharacterState, detector=None) -> dic
             logger.warning("Crop pool build failed", exc_info=True)
 
     datasets_root = char_dir / "datasets"
-    video512 = compose_dataset(pools, datasets_root / "video512", RATIO_VIDEO)
-    highres = compose_dataset(pools, datasets_root / "highres", RATIO_HIGHRES)
+    # Training cap is 512: downscale video512 to a 512 long edge (Lanczos). highres
+    # keeps a larger 768 long edge; full/face stay native.
+    video512 = compose_dataset(pools, datasets_root / "video512", RATIO_VIDEO, max_side=512)
+    highres = compose_dataset(pools, datasets_root / "highres", RATIO_HIGHRES, max_side=768)
     full_only = compose_dataset({"full": pools["full"]}, datasets_root / "full", {"full": 1.0})
     face_only = (compose_dataset({"close": pools["close"]}, datasets_root / "face", {"close": 1.0})
                  if pools["close"] else None)
