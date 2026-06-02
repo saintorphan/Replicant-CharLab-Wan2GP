@@ -7,10 +7,16 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 
 from . import paths
 
 logger = logging.getLogger("replicant.wizard_state")
+
+# Gradio runs handlers on a thread pool; the persistence handlers do a
+# read-modify-write of this file. Serialize them so concurrent saves don't lose
+# each other's keys (last-writer-wins). Reentrant so update() can call load/save.
+_lock = threading.RLock()
 
 
 def _path():
@@ -29,27 +35,39 @@ _MIGRATE = {
 
 
 def load() -> dict:
-    try:
-        d = json.loads(_path().read_text())
-    except Exception:
-        return {}
-    changed = False
-    for old, new in _MIGRATE.items():
-        if old in d:
-            d.setdefault(new, d.pop(old))
-            changed = True
-    if changed:
-        save(d)  # rewrite under the new key names
-    return d
+    with _lock:
+        try:
+            d = json.loads(_path().read_text())
+        except Exception:
+            return {}
+        changed = False
+        for old, new in _MIGRATE.items():
+            if old in d:
+                d.setdefault(new, d.pop(old))
+                changed = True
+        if changed:
+            save(d)  # rewrite under the new key names
+        return d
 
 
 def save(data: dict) -> None:
-    try:
-        p = _path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(data, indent=2, default=str))
-    except Exception:
-        logger.debug("wizard state save failed", exc_info=True)
+    with _lock:
+        try:
+            p = _path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(data, indent=2, default=str))
+        except Exception:
+            logger.debug("wizard state save failed", exc_info=True)
+
+
+def update(partial: dict) -> dict:
+    """Atomically merge ``partial`` into the persisted state (load+merge+save under
+    the lock) — use this instead of load()/save() pairs to avoid lost updates."""
+    with _lock:
+        d = load()
+        d.update(partial)
+        save(d)
+        return d
 
 
 def clear() -> None:

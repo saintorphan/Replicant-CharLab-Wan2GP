@@ -155,6 +155,16 @@ def available() -> bool:
         return False
 
 
+def release_segmentation():
+    """Free the cached BiRefNet body-swap segmentation model (~1GB) + its VRAM."""
+    try:
+        from .sd.segmentation import release_segmentation_model
+        release_segmentation_model()
+    except Exception:
+        logger.debug("segmentation release failed", exc_info=True)
+    _free_torch()
+
+
 def _apply_loras(pipe, loras):
     """Set the loaded SD pipe's LoRAs to exactly ``loras`` ([{"name","weight"}]).
 
@@ -191,11 +201,15 @@ def generate_txt2img(checkpoint_path, prompt, negative, width, height, steps, cf
             batch_size=int(batch_size), clip_skip=int(clip_skip),
             callback=callback or _abort_callback,  # armed so a batch abort interrupts
         )
+    if was_aborted():  # interrupted mid-denoise → discard the partial/noisy output
+        return []
+    import time
     out = Path(out_dir) if out_dir else (paths.cache_dir() / "sd_gen")
     out.mkdir(parents=True, exist_ok=True)
+    stamp = int(time.time() * 1000)  # unique per call so fixed-seed batches don't collide
     saved = []
     for i, img in enumerate(images or []):
-        f = out / f"sd_{int(seed)}_{i}.png"
+        f = out / f"sd_{int(seed)}_{stamp}_{i}.png"
         try:
             img.save(f)
             saved.append(str(f))
@@ -221,11 +235,15 @@ def generate_img2img(checkpoint_path, image_path, prompt, negative, width, heigh
             steps=int(steps), cfg_scale=float(cfg), seed=int(seed), sampler=sampler,
             scheduler=scheduler, batch_size=int(batch_size), clip_skip=int(clip_skip),
             callback=_abort_callback)  # armed so a batch abort interrupts
+    if was_aborted():  # interrupted mid-denoise → discard the partial/noisy output
+        return []
+    import time
     out = Path(out_dir) if out_dir else (paths.cache_dir() / "sd_gen")
     out.mkdir(parents=True, exist_ok=True)
+    stamp = int(time.time() * 1000)  # unique per call so fixed-seed batches don't collide
     saved = []
     for i, img in enumerate(images or []):
-        f = out / f"i2i_{int(seed)}_{i}.png"
+        f = out / f"i2i_{int(seed)}_{stamp}_{i}.png"
         try:
             img.save(f); saved.append(str(f))
         except Exception:
@@ -506,7 +524,7 @@ def ip_adapter_inpaint(checkpoint_path, target_path, reference_path, mask_image,
                    strength=float(denoise), num_inference_steps=int(steps),
                    guidance_scale=float(cfg), width=w, height=h, generator=gen,
                    callback_on_step_end=_abort_callback).images[0]
-    if _abort_flag:  # interrupted mid-run — discard the partial result
+    if should_skip(current_index()):  # master abort OR this item's per-pose skip
         return None
     out = Path(out_dir) if out_dir else (paths.cache_dir() / "swap")
     out.mkdir(parents=True, exist_ok=True)
@@ -546,11 +564,13 @@ def _detect_person_regions(image_path, threshold=0.3):
         import numpy as np
         import torch
         from PIL import Image, ImageDraw
-        from ultralytics import YOLO
         mp = paths.models_dir() / "body" / "person_yolov8s-seg.pt"
         if not mp.is_file():
             logger.info("person_yolov8s-seg.pt not downloaded — body ADetailer skipped.")
             return []
+        from . import deps
+        deps.ensure({"ultralytics": "ultralytics"})  # auto-install if missing (or raise)
+        from ultralytics import YOLO
         src = Image.open(image_path).convert("RGB")
         W, H = src.size
         model = YOLO(str(mp))
@@ -596,6 +616,13 @@ def run_adetailer(checkpoint_path, image_path, prompt, negative, sampler=None,
         return image_path
     release_sd()  # free the txt2img checkpoint
     pipe = _get_inpaint(checkpoint_path, with_ip=False)
+    if sampler:  # honour the requested sampler/scheduler (else the checkpoint default)
+        try:
+            from .sd.sd_samplers import create_scheduler
+            pipe.scheduler = create_scheduler(sampler, scheduler or "",
+                                              dict(pipe.scheduler.config))
+        except Exception:
+            logger.debug("ADetailer scheduler set failed; using default", exc_info=True)
     result = src.copy()
     for (x1, y1, x2, y2), full_mask in regions:
         bw, bh = x2 - x1, y2 - y1
@@ -622,7 +649,10 @@ def run_adetailer(checkpoint_path, image_path, prompt, negative, sampler=None,
                            image=crop.resize((tw, th), Image.LANCZOS),
                            mask_image=m.resize((tw, th), Image.LANCZOS),
                            strength=float(denoise), num_inference_steps=int(steps),
-                           guidance_scale=float(cfg), width=tw, height=th).images[0]
+                           guidance_scale=float(cfg), width=tw, height=th,
+                           callback_on_step_end=_abort_callback).images[0]
+        if was_aborted():  # master abort during the refine pass → return original
+            return image_path
         result.paste(out_img.resize((cw, ch), Image.LANCZOS), (cx1, cy1), m)
     out = Path(out_dir) if out_dir else (paths.cache_dir() / "swap")
     out.mkdir(parents=True, exist_ok=True)

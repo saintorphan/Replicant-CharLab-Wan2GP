@@ -58,9 +58,17 @@ def build_seed_prompt(description: str, style: str = "realism") -> str:
 # full-body front view. They belong on the BASE image, but must NOT ride along
 # into per-pose prompts — otherwise every pose (sitting, kneeling, close-up, …) is
 # dragged back to a standing full-body shot.
+# Ordered most-specific-first so multi-word phrases are removed before their
+# single-word fragments. Covers the seeded BASE_FRAMING plus the common ways the
+# Qwen3.5 enhancer rewords it, so an enhanced base prompt is still stripped for poses.
 _FRAMING_CLAUSES = (
-    "full body photo", "facing the viewer", "standing front view",
-    "head to toe", "entire body visible", "wide shot", "full body shot",
+    "full body photo", "full-body photo", "full body shot", "full-body shot",
+    "entire body visible", "entire body in frame", "entire body", "whole body",
+    "from head to toe", "head to toe", "head-to-toe",
+    "facing the viewer", "facing the camera", "standing front view",
+    "standing pose", "standing", "feet visible",
+    "full body", "full-body", "full length", "full-length",
+    "wide shot", "wide-angle shot", "wide angle", "long shot", "establishing shot",
 )
 
 
@@ -145,6 +153,7 @@ class CharacterState:
     model_family: str = ""           # native Wan2GP model type for generation
     sampler: str = ""
     scheduler: str = ""
+    clip_skip: int = 1
     steps: int = 20
     cfg_scale: float = 7.0
     width: int = 512
@@ -161,8 +170,9 @@ class CharacterState:
         "lora_prompt_tags", "lora_trigger_words", "positive_prompt", "negative_prompt",
         "face_swap_enabled", "face_enhancer", "face_enhancer_strength", "face_blend_ratio",
         "body_swap_enabled", "body_ip_scale", "body_denoise", "body_cfg", "body_cn_strength",
-        "checkpoint", "model_family", "sampler", "scheduler", "steps", "cfg_scale",
-        "width", "height", "seed", "ref_look_strength", "apply_body_to_poses", "adetailer",
+        "checkpoint", "model_family", "sampler", "scheduler", "clip_skip",
+        "steps", "cfg_scale", "width", "height", "seed", "ref_look_strength",
+        "apply_body_to_poses", "adetailer",
     )
 
     @property

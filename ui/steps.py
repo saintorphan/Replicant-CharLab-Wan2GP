@@ -368,7 +368,6 @@ def build_poses(visible: bool, init=None):
                         c["pose_color"].append(cm)
                         c["pose_undo"].append(un)
                         c["pose_abort"].append(ab)
-                        c["pose_abort"].append(ab)
     return g, c
 
 

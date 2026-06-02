@@ -153,6 +153,7 @@ class ReplicantCharLab(WAN2GPPlugin):
         try:
             gen_sd.release_sd()
             gen_sd.release_inpaint()
+            gen_sd.release_segmentation()  # cached BiRefNet (~1GB)
             self._release_faceswap()
             gen_sd._free_torch()
         except Exception:
@@ -306,10 +307,16 @@ class ReplicantCharLab(WAN2GPPlugin):
         with gr.Column(elem_id="replicant-root"):
             ui = wizard.build_wizard(model_choices=model_choices, lora_choices=lora_choices,
                                      init=init)
-        self._reconcile_loras_to_model(ui)
-        self._wire_enhancer(ui)
-        self._wire_generation(ui)
-        self._wire_context_menu(ui)
+        # Guard the post-build wiring: a single bad event wiring should degrade this
+        # tab, not abort the whole Wan2GP Blocks build (which would take down the app).
+        for _step in (self._reconcile_loras_to_model, self._wire_enhancer,
+                      self._wire_generation, self._wire_context_menu):
+            try:
+                _step(ui)
+            except Exception:
+                traceback.print_exc()
+                gr.Warning(f"Replicant: a UI wiring step failed ({_step.__name__}); "
+                           "that feature may be inert.")
         self.on_tab_outputs = [self.main_tabs] if hasattr(self, "main_tabs") else None
         self._ui = ui
         return ui
@@ -408,15 +415,24 @@ class ReplicantCharLab(WAN2GPPlugin):
         try:
             result = (api or self._api).submit_task(settings).result()
         except Exception as e:
+            # An abort/cancel must NOT escape (it would blow up the whole pose batch
+            # and lose every completed pose) — swallow it and let the caller keep
+            # what's done. Genuine failures still raise.
+            if gen_sd.was_aborted():
+                return []
             if "generation in progress" in str(e).lower():
                 raise gr.Error(
                     "Another generation is still pending. Native (Flux/Z-Image/Qwen) "
                     "gens run in Wan2GP's queue and PAUSE if the browser loses focus — "
                     "click the Video Generator tab to let it finish, then try again.")
             raise
+        if gen_sd.was_aborted():  # cancelled mid-task → discard, keep prior poses
+            return []
         if result.success and result.generated_files:
             return list(result.generated_files)
         if result.errors:
+            if gen_sd.was_aborted():
+                return []
             raise gr.Error(str(list(result.errors)[0]))
         return []
 
@@ -522,10 +538,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                     out.append(p)
             else:
                 out.append(None)
-        st = wizard_state.load()
-        st["poses.pose_gallery"] = out
-        st["poses.specs"] = specs
-        wizard_state.save(st)
+        wizard_state.update({"poses.pose_gallery": out, "poses.specs": specs})
         return out
 
     def _snapshot_prev(self, images):
@@ -603,6 +616,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                       progress=gr.Progress()):
             if not (pos and pos.strip()):
                 raise gr.Error("Build or enhance a positive prompt on step 2 first.")
+            gen_sd.clear_abort()  # don't inherit a stale abort flag from a prior run
             self._release_faceswap()  # base gen is pure SD — free InsightFace VRAM
             files, n = [], int(count)
             for i in range(n):
@@ -644,6 +658,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 raise gr.Error("No reference image to reimagine (add one on step 1).")
             if not (pos and pos.strip()):
                 raise gr.Error("Build or enhance a positive prompt on step 2 first.")
+            gen_sd.clear_abort()  # don't inherit a stale abort flag from a prior run
             self._release_faceswap()
             files, n = [], int(count)
             if backend == "native":
@@ -989,6 +1004,7 @@ class ReplicantCharLab(WAN2GPPlugin):
             prompt = (pos or "").strip()
             if focus and focus.strip():
                 prompt = (prompt + ", " + focus.strip()).strip(" ,")
+            gen_sd.clear_abort()  # don't inherit a stale abort flag from a prior run
             self._release_faceswap()
             if backend == "native":  # img2img via Wan2GP's queue (no SD GPU lock)
                 outs = self._gen_native(ident, prompt, neg or "", int(w), int(h),
@@ -1086,7 +1102,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 progress((i, len(P)), desc=f"Generating pose {i + 1}/{len(P)} ({ps.distance}/{ps.angle})")
                 pw, ph = (max(width, height), min(width, height)) if ps.orientation == "landscape" \
                     else (min(width, height), max(width, height))
-                p_pos = f"{base_clean}, {ps.description}"
+                p_pos = ", ".join(p for p in (base_clean, ps.description) if p)
                 p_neg = poses.pose_negative_for(ps.distance, neg)
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
                 gen_sd.set_current_index(i)
@@ -1207,7 +1223,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                                "orientation": ps.orientation} if ps else
                               {"distance": "full", "angle": "front", "orientation": "portrait"}))
                 desc = ps.description if ps else ""
-                p_pos = f"{base_clean}, {desc}" if desc else base_clean
+                p_pos = ", ".join(p for p in (base_clean, desc) if p)
                 p_neg = poses.pose_negative_for(
                     (ps.distance if ps else spec.get("distance", "full")), neg)
                 orientation = ps.orientation if ps else spec.get("orientation")
@@ -1258,18 +1274,31 @@ class ReplicantCharLab(WAN2GPPlugin):
                 to_swap.append((i, new, spec))
                 display[i] = new  # show the re-rolled image now; swap pass refines it
                 yield list(display)
-            # On a master abort, skip the (slow) swap pass; persist what's done.
+            # On a master abort, skip the (slow) swap pass but KEEP the bare re-rolled
+            # images already produced (don't revert them to the pre-run version).
             if to_swap and not gen_sd.was_aborted():
                 items = [(im, sp) for (_, im, sp) in to_swap]
                 swapped, _ = self._pose_swaps(
                     state, ident, items, pos, neg, do_body, body_src, body_ip_scale,
                     body_denoise, apply_face, face_src, paths.cache_dir() / "poses",
                     progress, start_idx=1000, adet=adet)
-                for (oi, _, _), sw in zip(to_swap, swapped):
-                    # Color match (only for ticked Cohesion/Re-Roll poses) → base tones.
-                    if sw and oi < len(colors) and colors[oi] and sel_base:
-                        sw = gen_sd.color_match(sw, sel_base, body_only=True)
-                    final[oi] = sw
+                # Color match (only for ticked Cohesion/Re-Roll poses) → base tones.
+                # It runs the person-seg YOLO on the GPU, so hold the shared lock
+                # (only acquire if any pose actually needs it).
+                need_cm = bool(sel_base) and any(
+                    oi < len(colors) and colors[oi] for (oi, _, _) in to_swap)
+                cm_locked = need_cm and self.acquire_gpu(state)
+                try:
+                    for (oi, _, _), sw in zip(to_swap, swapped):
+                        if cm_locked and sw and oi < len(colors) and colors[oi] and sel_base:
+                            sw = gen_sd.color_match(sw, sel_base, body_only=True)
+                        final[oi] = sw
+                finally:
+                    if cm_locked:
+                        self.release_gpu(state)
+            elif to_swap:  # aborted → keep the un-swapped re-rolls (mirrors _gen_poses)
+                for (oi, im, _) in to_swap:
+                    final[oi] = im
             saved = self._persist_poses(final, specs)
             return saved + [{"poses": saved, "specs": specs}, prev_snapshot]
 
@@ -1279,7 +1308,8 @@ class ReplicantCharLab(WAN2GPPlugin):
             + [ui["poses_state"]],
             outputs=pose_out + [pose["pose_prev"]])
 
-        # Per-pose ↩ undo: revert one slot to its pre-re-run image (+ sync state).
+        # Per-pose ↩ undo: revert one slot to its pre-re-run image (+ sync state +
+        # re-persist so the revert survives an app reload).
         def _make_pose_undo(i):
             def _h(prev, pstate):
                 if not prev or i >= len(prev) or not prev[i]:
@@ -1289,8 +1319,10 @@ class ReplicantCharLab(WAN2GPPlugin):
                 while len(gallery) <= i:
                     gallery.append(None)
                 gallery[i] = prev[i]
-                p["poses"] = gallery
-                return prev[i], p
+                specs = p.get("specs", [])
+                saved = self._persist_poses(gallery, specs)  # rewrite canonical + state
+                p["poses"] = saved
+                return (saved[i] if i < len(saved) else prev[i]), p
             return _h
         for _i, _ub in enumerate(pose["pose_undo"]):
             _ub.click(_make_pose_undo(_i),
@@ -1307,10 +1339,38 @@ class ReplicantCharLab(WAN2GPPlugin):
                                    outputs=[pose["body_mode"]])
 
     @staticmethod
+    def _ctx_path_allowed(p) -> bool:
+        """Confine right-clicked file refs to the app's own roots so a crafted relay
+        value can't turn the 'Reference' action into an arbitrary-file read."""
+        import os
+        import tempfile
+        try:
+            rp = os.path.realpath(p)
+        except Exception:
+            return False
+        roots = []
+        for r in (paths.lab_root(), paths.cache_dir(), paths.orphansuite_root(),
+                  Path(os.getcwd()), Path(tempfile.gettempdir())):
+            try:
+                roots.append(os.path.realpath(r))
+            except Exception:
+                pass
+        for r in roots:
+            try:
+                if os.path.commonpath([rp, r]) == r:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
     def _resolve_ctx_src(src):
         """Resolve a right-clicked media src to a local file path: a /file= URL → its
-        path; a data: URL → decoded to the persist dir. Returns a path or None."""
+        path; a data: URL → decoded to the persist dir. Returns a path or None.
+        File refs are confined to the app's roots; data URLs are size-capped and
+        validated as real images before use."""
         import base64
+        import io
         import os
         import time
         import urllib.parse
@@ -1319,18 +1379,23 @@ class ReplicantCharLab(WAN2GPPlugin):
         if src.startswith("data:"):
             try:
                 head, b64 = src.split(",", 1)
+                if len(b64) > 64 * 1024 * 1024:  # ~48MB decoded — reject huge payloads
+                    return None
+                raw = base64.b64decode(b64)
+                from PIL import Image
+                Image.open(io.BytesIO(raw)).verify()  # reject non-image / bomb headers
                 ext = ".jpg" if "jpeg" in head or "jpg" in head else ".png"
                 d = paths.cache_dir() / "persist"
                 d.mkdir(parents=True, exist_ok=True)
                 f = d / f"ctxref_{int(time.time() * 1000)}{ext}"
-                f.write_bytes(base64.b64decode(b64))
+                f.write_bytes(raw)
                 return str(f)
             except Exception:
                 return None
         if "/file=" in src:
             p = urllib.parse.unquote(src.split("/file=", 1)[1].split("?", 1)[0])
-            return p if os.path.isfile(p) else None
-        return src if os.path.isfile(src) else None
+            return p if (os.path.isfile(p) and ReplicantCharLab._ctx_path_allowed(p)) else None
+        return src if (os.path.isfile(src) and ReplicantCharLab._ctx_path_allowed(src)) else None
 
     def _wire_context_menu(self, ui):
         """Right-click → 'Replicant (Reference)': load the image as the Setup reference

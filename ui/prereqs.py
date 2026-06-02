@@ -95,9 +95,13 @@ def build_prereqs():
                                       placeholder="/path/to/your/models", scale=3)
                 link_target = gr.Dropdown(
                     label="Into", value="sdxl_models",
+                    # Targets resolve to the exact dir each loader scans (incl. the
+                    # face/body/birefnet subdirs) — see paths.link_target_dir.
                     choices=[("SDXL checkpoints", "sdxl_models"),
                              ("SDXL LoRAs", "sdxl_loras"),
-                             ("Face / ADetailer / BiRefNet weights", "models")],
+                             ("Face / swap weights", "face"),
+                             ("ADetailer / person-seg (body)", "body"),
+                             ("BiRefNet (body-swap seg)", "birefnet")],
                     scale=2)
                 link_btn = gr.Button("🔗 Link", scale=1)
             link_status = gr.Markdown()

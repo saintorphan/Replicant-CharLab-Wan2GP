@@ -25,9 +25,11 @@ from . import paths
 
 logger = logging.getLogger("replicant.models")
 
-# BiRefNet (body-swap segmentation) downloads into the plugin's own models dir;
-# segment_foreground falls back to the HF model id if it isn't present there.
-_BIREFNET_DIR = str(paths.models_dir() / "birefnet")
+# BiRefNet (body-swap segmentation) downloads into the plugin's shared models dir.
+# NB: resolve this LAZILY (ModelSpec.local_dir) — freezing it at import means a
+# mid-session models-dir repoint would leave is_present()/download() on the old
+# path while runtime segmentation uses the new one (false "present" + silent
+# ~1GB HF re-download). segment_foreground falls back to the HF id if absent.
 _BUFFALO_DIR = str(Path.home() / ".insightface" / "models" / "buffalo_l")
 
 
@@ -43,15 +45,24 @@ class ModelSpec:
     repo_local_dir: str = ""     # absolute local_dir for snapshot (else HF cache)
     extract: bool = False        # url is a .zip → unpack into extract_to
     extract_to: str = ""         # absolute dir for extracted contents
+    allow_patterns: tuple = ()   # HF snapshot filter (avoid pulling a whole big repo)
     note: str = ""
 
     @property
     def downloadable(self) -> bool:
         return bool(self.url or self.repo)
 
+    def local_dir(self) -> str:
+        """The snapshot dir, resolved at call time. BiRefNet tracks the (possibly
+        repointed) shared models dir; other repos use their static repo_local_dir."""
+        if self.key == "birefnet":
+            return str(paths.models_dir() / "birefnet")
+        return self.repo_local_dir
+
     def display_path(self) -> str:
-        if self.repo and self.repo_local_dir:
-            return self.repo_local_dir
+        ld = self.local_dir()
+        if self.repo and ld:
+            return ld
         if self.repo:
             return f"HF cache · {self.repo}"
         if self.extract:
@@ -60,8 +71,9 @@ class ModelSpec:
 
     def is_present(self) -> bool:
         if self.repo:
-            if self.repo_local_dir:
-                d = Path(self.repo_local_dir)
+            ld = self.local_dir()
+            if ld:
+                d = Path(ld)
                 return d.is_dir() and any(d.iterdir())
             try:  # cache check, no network
                 from huggingface_hub import snapshot_download
@@ -71,7 +83,16 @@ class ModelSpec:
                 return False
         if self.extract:
             d = Path(self.extract_to)
-            return d.is_dir() and any(d.iterdir())
+            if d.is_dir() and any(d.iterdir()):
+                return True
+            if self.key == "buffalo_l":
+                # Also accept the shared-dir layout the face loader looks in, so a
+                # buffalo_l linked into models/face isn't reported missing.
+                face = paths.models_dir() / "face"
+                for alt in (face / "buffalo_l", face / "models" / "buffalo_l"):
+                    if alt.is_dir() and any(alt.iterdir()):
+                        return True
+            return False
         return (paths.models_dir() / self.subpath).is_file()
 
 
@@ -89,10 +110,6 @@ REGISTRY: list[ModelSpec] = [
               "Optional face restoration after swaps.", required=False,
               subpath="face/codeformer.onnx",
               url="https://huggingface.co/facefusion/models-3.0.0/resolve/main/codeformer.onnx"),
-    ModelSpec("face_yolov8s", "ADetailer face_yolov8s",
-              "Better face detection on tough angles.", required=False,
-              subpath="face/face_yolov8s.pt",
-              url="https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8s.pt"),
     ModelSpec("person_yolov8s_seg", "ADetailer person_yolov8s-seg",
               "Body detection/segmentation — lets body-ADetailer use a person model "
               "(not the face model).", required=False,
@@ -106,20 +123,15 @@ REGISTRY: list[ModelSpec] = [
     # --- body swap (SD-family only) ---
     ModelSpec("birefnet", "BiRefNet (body-swap segmentation)",
               "Body swap: person segmentation mask.", required=False,
-              repo="ZhengPeng7/BiRefNet", repo_local_dir=_BIREFNET_DIR,
-              note="Loaded from a local dir, not HF cache."),
-    ModelSpec("openpose_annotator", "OpenPose annotator (body swap)",
-              "Body swap: extract a pose control image from the base.",
-              required=False, repo="lllyasviel/ControlNet"),
-    ModelSpec("controlnet_openpose_sdxl", "ControlNet OpenPose (SDXL)",
-              "Body swap: pose ControlNet for SDXL/Pony/Illustrious.",
-              required=False, repo="thibaud/controlnet-openpose-sdxl-1.0"),
-    ModelSpec("controlnet_openpose_sd15", "ControlNet OpenPose (SD1.5)",
-              "Body swap: pose ControlNet for SD1.5.", required=False,
-              repo="lllyasviel/control_v11p_sd15_openpose"),
+              repo="ZhengPeng7/BiRefNet",  # dir resolved lazily via local_dir()
+              note="Loaded from the shared models dir (models/birefnet), not HF cache."),
     ModelSpec("ip_adapter", "IP-Adapter (body swap identity)",
               "Body swap: applies the source person's identity.", required=False,
-              repo="h94/IP-Adapter"),
+              repo="h94/IP-Adapter",
+              # Only the SDXL ViT-H adapter + its image encoder are loaded — don't
+              # snapshot the whole ~10GB repo.
+              allow_patterns=("sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors",
+                              "models/image_encoder/*")),
 ]
 
 # Models the body-swap path needs present (or it errors, not auto-downloads).
@@ -202,9 +214,12 @@ def _download_repo(spec, progress) -> str:
         except Exception:
             pass
     kwargs = {"tqdm_class": _gr_tqdm(progress, spec.name)}
-    if spec.repo_local_dir:
-        Path(spec.repo_local_dir).mkdir(parents=True, exist_ok=True)
-        kwargs["local_dir"] = spec.repo_local_dir
+    ld = spec.local_dir()  # resolved live (BiRefNet tracks the shared models dir)
+    if ld:
+        Path(ld).mkdir(parents=True, exist_ok=True)
+        kwargs["local_dir"] = ld
+    if spec.allow_patterns:
+        kwargs["allow_patterns"] = list(spec.allow_patterns)
     snapshot_download(spec.repo, **kwargs)
     return f"[Success] {spec.name} → {spec.display_path()}"
 
@@ -220,8 +235,12 @@ def _download_file(spec, progress) -> str:
                 progress(min(1.0, blocks * bsize / total), desc=f"Downloading {spec.name}")
             except Exception:
                 pass
-    urllib.request.urlretrieve(spec.url, tmp, _hook)
-    tmp.replace(dst)
+    try:
+        urllib.request.urlretrieve(spec.url, tmp, _hook)
+        tmp.replace(dst)
+    except Exception:
+        tmp.unlink(missing_ok=True)  # don't leave a half-downloaded .part
+        raise
     return f"[Success] {spec.name} → {dst}"
 
 
@@ -236,8 +255,10 @@ def _download_zip(spec, progress) -> str:
                 progress(min(1.0, blocks * bsize / total), desc=f"Downloading {spec.name}")
             except Exception:
                 pass
-    urllib.request.urlretrieve(spec.url, tmp, _hook)
-    with zipfile.ZipFile(tmp) as z:
-        z.extractall(dst_dir)
-    tmp.unlink(missing_ok=True)
+    try:
+        urllib.request.urlretrieve(spec.url, tmp, _hook)
+        with zipfile.ZipFile(tmp) as z:
+            z.extractall(dst_dir)
+    finally:
+        tmp.unlink(missing_ok=True)  # always clean up the temp .zip
     return f"[Success] {spec.name} → {dst_dir}"

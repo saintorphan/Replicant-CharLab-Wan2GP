@@ -311,9 +311,7 @@ def _wire_persistence(comps, settings, poses_state, init):
             c.value = init[k]
 
     def _save_scalars(*vals):
-        d = wizard_state.load()
-        d.update(dict(zip(keys, vals)))
-        wizard_state.save(d)
+        wizard_state.update(dict(zip(keys, vals)))
     for c in fields:
         c.change(_save_scalars, inputs=fields, outputs=[])
 
@@ -326,15 +324,14 @@ def _wire_persistence(comps, settings, poses_state, init):
         img_comps.append(comp)
 
         def _save_img(path, _k=key):
-            d = wizard_state.load(); d[_k] = _stable_image(path, _k); wizard_state.save(d)
+            wizard_state.update({_k: _stable_image(path, _k)})
         comp.change(_save_img, inputs=[comp], outputs=[])
 
     # --- candidate gallery ---
     gal = comps.get("base", {}).get("candidates")
     if gal is not None:
         def _save_gal(vals):
-            d = wizard_state.load(); d["base.candidates"] = _stable_gallery(vals)
-            wizard_state.save(d)
+            wizard_state.update({"base.candidates": _stable_gallery(vals)})
         gal.change(_save_gal, inputs=[gal], outputs=[])
 
     # Pose images persist via the plugin's _persist_poses; here we just clear them.
@@ -345,12 +342,12 @@ def _wire_persistence(comps, settings, poses_state, init):
     pose_colors = list(comps.get("poses", {}).get("pose_color") or [])
     if pose_choices:
         def _save_choices(*vals):
-            d = wizard_state.load(); d["poses.choices"] = list(vals); wizard_state.save(d)
+            wizard_state.update({"poses.choices": list(vals)})
         for _dd in pose_choices:
             _dd.change(_save_choices, inputs=pose_choices, outputs=[])
     if pose_colors:
         def _save_colors(*vals):
-            d = wizard_state.load(); d["poses.colors"] = list(vals); wizard_state.save(d)
+            wizard_state.update({"poses.colors": list(vals)})
         for _cm in pose_colors:
             _cm.change(_save_colors, inputs=pose_colors, outputs=[])
 
@@ -360,7 +357,8 @@ def _wire_persistence(comps, settings, poses_state, init):
     if clear_btn is not None:
         import shutil
         clear_outputs = (fields + img_comps + ([gal] if gal is not None else [])
-                         + list(pose_imgs) + [poses_state])
+                         + list(pose_imgs) + [poses_state]
+                         + list(pose_choices) + list(pose_colors))
         ccr, ccb = su["clear_confirm_row"], su["clear_confirm_btns"]
         kar, kab = su["cache_confirm_row"], su["cache_confirm_btns"]
 
@@ -370,6 +368,8 @@ def _wire_persistence(comps, settings, poses_state, init):
                     + [None] * len(img_comps) + ([None] if gal is not None else [])
                     + [None] * len(pose_imgs)
                     + [{"poses": [], "specs": []}]
+                    + ["Re-Roll (img2img)"] * len(pose_choices)  # pose dropdown defaults
+                    + [False] * len(pose_colors)                 # color-match defaults
                     + [gr.update(visible=False), gr.update(visible=False)])
 
         def _clear_cache():
@@ -410,7 +410,9 @@ def _wire_load_save(comps, settings, poses_state):
                     prm["positive_prompt"], prm["negative_prompt"],
                     info["reference_image"], base["selected_base"],
                     settings["steps"], settings["cfg_scale"], settings["seed"],
-                    settings["width"], settings["height"]]
+                    settings["width"], settings["height"],
+                    settings["sampler"], settings["scheduler"], settings["clip_skip"],
+                    settings["loras"], settings["lora_multipliers"]]
 
     def _load(sel):
         if not sel:
@@ -418,7 +420,9 @@ def _wire_load_save(comps, settings, poses_state):
         cs = character.load_character(paths.character_dir(sel))
         return [cs.name, cs.description, cs.style, cs.positive_prompt, cs.negative_prompt,
                 cs.reference_image or None, cs.selected_base or None,
-                cs.steps, cs.cfg_scale, cs.seed, cs.width, cs.height]
+                cs.steps, cs.cfg_scale, cs.seed, cs.width, cs.height,
+                cs.sampler or "default", cs.scheduler or "", int(cs.clip_skip),
+                list(cs.selected_loras or []), cs.lora_multipliers or ""]
 
     # Seed the positive prompt from description + style; fill default negative if empty.
     def _seed(desc, style, cur_neg):
@@ -435,11 +439,13 @@ def _wire_load_save(comps, settings, poses_state):
                    swap["face_source"], swap["body_source"],
                    settings["steps"], settings["cfg_scale"], settings["seed"],
                    settings["width"], settings["height"],
+                   settings["sampler"], settings["scheduler"], settings["clip_skip"],
+                   settings["loras"], settings["lora_multipliers"],
                    poses_state]
 
     def _save(name, desc, style, pos, neg, ref, sbase, face_src, body_src,
-              steps, cfg, seed, width, height, poses_data,
-              progress=gr.Progress()):
+              steps, cfg, seed, width, height, sampler, scheduler, clip_skip,
+              loras, lora_mult, poses_data, progress=gr.Progress()):
         if not (name and name.strip()):
             gr.Warning("Enter a character name first.")
             return "⚠️ Enter a character name first.", gr.update()
@@ -453,7 +459,9 @@ def _wire_load_save(comps, settings, poses_state):
             approved_poses=list(pd.get("poses", [])),
             approved_pose_specs=list(pd.get("specs", [])),
             steps=int(steps), cfg_scale=float(cfg), seed=int(seed),
-            width=int(width), height=int(height))
+            width=int(width), height=int(height),
+            sampler=sampler or "", scheduler=scheduler or "", clip_skip=int(clip_skip),
+            selected_loras=list(loras or []), lora_multipliers=lora_mult or "")
         cdir = paths.character_dir(name)
         character.save_character(cdir, cs)  # params + images -> characters/<name>/
         msg = f"✅ Saved to `{cdir}`"
@@ -475,6 +483,12 @@ def _wire_load_save(comps, settings, poses_state):
         cs = character.load_character(cdir)
         if not cs.approved_poses:
             raise gr.Error("No approved poses — generate/approve poses on ⑤ Replicate first.")
+        # Dataset crops use InsightFace buffalo_l, which would otherwise auto-download
+        # silently — keep the explicit-button policy: require it first.
+        from ..core import models
+        if models.missing(["buffalo_l"]):
+            raise gr.Error("Dataset crops need InsightFace buffalo_l — download it in "
+                           "OrphanSuite → Models first.")
         try:
             progress(0.3, desc="Building LoRA datasets…")
             gen_sd.release_sd()  # free any resident SD model before crop detection
