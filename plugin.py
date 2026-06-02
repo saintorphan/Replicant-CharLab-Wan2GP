@@ -28,19 +28,31 @@ from .ui.styles import CSS
 PLUGIN_ID = "ReplicantCharLab"
 PLUGIN_NAME = "Replicant Character Lab"
 
-# Shared, idempotent right-click context menu for images/videos ANYWHERE in the app.
-# First of the user's plugins to load creates window.SaintorphanMenu (the 'saintorphan'
-# header + separator + the contextmenu listener); every plugin then registers its own
-# items via window.SaintorphanMenu.register('image'|'video', label, handler). Replicant
-# registers 'Replicant (Reference)' which relays the picked image's src to Python.
+# Shared, idempotent right-click context menu ANYWHERE in the app + a cross-plugin
+# presence handler so items can be wired regardless of plugin load order.
+# First of the user's plugins to load creates window.SaintorphanMenu:
+#   .register(match, label, handler)  match = 'image' | 'video' | any CSS selector
+#       (e.g. '.reel2reel-timeline'); item shows only when the right-clicked element
+#       matches. handler(matchedEl) runs on click.
+#   .announce(name)                   a plugin declares itself present.
+#   .whenPresent(name, cb)            cb fires now if present, else when name announces
+#       — works whether the other plugin loaded earlier OR is installed/loaded later.
+# Replicant announces 'replicant' and registers 'Replicant (Reference)' for images.
 # Injected via <img onerror> (gr.HTML doesn't run <script>); all-single-quoted JS.
 _CTX_MENU_JS = (
     "<img src=x style='display:none' onerror=\"(function(){"
-    "if(!window.SaintorphanMenu){var M=window.SaintorphanMenu={image:[],video:[]};"
-    "M.register=function(kind,label,handler){(M[kind]||(M[kind]=[])).push("
-    "{label:label,handler:handler});};"
+    "if(!window.SaintorphanMenu){var M=window.SaintorphanMenu={items:[],present:{},_w:{}};"
+    "M.announce=function(n){M.present[n]=true;(M._w[n]||[]).forEach(function(f){"
+    "try{f();}catch(e){console.error(e);}});M._w[n]=[];};"
+    "M.whenPresent=function(n,cb){if(M.present[n]){try{cb();}catch(e){console.error(e);}}"
+    "else{(M._w[n]||(M._w[n]=[])).push(cb);}};"
+    "M.register=function(match,label,handler){M.items.push("
+    "{match:match,label:label,handler:handler});};"
+    "function hit(match,el){if(match==='image')return el.closest('img');"
+    "if(match==='video')return el.closest('video');"
+    "try{return el.closest(match);}catch(e){return null;}}"
     "function close(){var m=document.getElementById('saintorphan-ctx');if(m)m.remove();}"
-    "function build(x,y,kind,media){close();var items=M[kind]||[];if(!items.length)return;"
+    "function build(x,y,hits){close();"
     "var menu=document.createElement('div');menu.id='saintorphan-ctx';"
     "menu.style.cssText='position:fixed;z-index:99999;background:#1f2430;border:1px solid "
     "#3a3f4b;border-radius:8px;padding:4px 0;box-shadow:0 6px 24px rgba(0,0,0,.5);"
@@ -50,22 +62,21 @@ _CTX_MENU_JS = (
     "user-select:none;';menu.appendChild(h);"
     "var hr=document.createElement('div');hr.style.cssText='height:1px;background:#3a3f4b;"
     "margin:4px 0;';menu.appendChild(hr);"
-    "items.forEach(function(it){var el=document.createElement('div');el.textContent=it.label;"
+    "hits.forEach(function(hk){var el=document.createElement('div');el.textContent=hk.it.label;"
     "el.style.cssText='padding:6px 14px;cursor:pointer;white-space:nowrap;';"
     "el.onmouseenter=function(){el.style.background='#2d3340';};"
     "el.onmouseleave=function(){el.style.background='';};"
     "el.addEventListener('click',function(ev){ev.stopPropagation();close();"
-    "try{it.handler(media);}catch(err){console.error(err);}});menu.appendChild(el);});"
+    "try{hk.it.handler(hk.el);}catch(err){console.error(err);}});menu.appendChild(el);});"
     "document.body.appendChild(menu);var r=menu.getBoundingClientRect();"
     "if(x+r.width>window.innerWidth)x=window.innerWidth-r.width-6;"
     "if(y+r.height>window.innerHeight)y=window.innerHeight-r.height-6;"
     "menu.style.left=x+'px';menu.style.top=y+'px';}"
-    "document.addEventListener('contextmenu',function(e){"
-    "var media=e.target.closest('img, video');if(!media)return;"
-    "var kind=(media.tagName.toLowerCase()==='video')?'video':'image';"
-    "if(!(M[kind]&&M[kind].length))return;e.preventDefault();build(e.clientX,e.clientY,kind,media);},true);"
+    "document.addEventListener('contextmenu',function(e){var hits=[];"
+    "M.items.forEach(function(it){var el=hit(it.match,e.target);if(el)hits.push({it:it,el:el});});"
+    "if(!hits.length)return;e.preventDefault();build(e.clientX,e.clientY,hits);},true);"
     "document.addEventListener('click',close);document.addEventListener('scroll',close,true);}"
-    "var M=window.SaintorphanMenu;if(!M._replicant){M._replicant=true;"
+    "var M=window.SaintorphanMenu;if(!M._replicant){M._replicant=true;M.announce('replicant');"
     "M.register('image','Replicant (Reference)',function(media){"
     "var src=media.currentSrc||media.src||'';"
     "var send=function(v){var b=document.querySelector('#replicant-ctx-relay textarea')"
