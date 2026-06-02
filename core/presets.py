@@ -154,8 +154,13 @@ def for_model(model_value, get_default_settings=None) -> dict:
 # --- resolution (locked to the family's trained portrait aspect) -----------
 
 def _portrait_base(model_value, get_default_settings=None):
-    """The recommended PORTRAIT (w, h) for a model — width <= height."""
-    rec = for_model(model_value, get_default_settings)
+    """The recommended PORTRAIT (w, h) for a model's family — width <= height.
+    Uses the family PORTRAIT preset (factory + user override), NOT the model's own
+    native default: some native models (e.g. Z-Image) default to 1:1, which would
+    otherwise collapse Replicant's portrait base to square. Steps/CFG still come
+    from the model via for_model; only the aspect/size is family-portrait here."""
+    fam = family_of(model_value)
+    rec = effective(fam) if fam else {}
     w, h = rec.get("width") or 832, rec.get("height") or 1216
     return min(w, h), max(w, h)
 
