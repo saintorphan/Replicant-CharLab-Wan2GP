@@ -120,14 +120,16 @@ class ReplicantCharLab(WAN2GPPlugin):
         # purple-border CSS above can target only our tab. gr.HTML sets innerHTML,
         # which does NOT execute <script> tags — so run via an <img onerror> hook,
         # which fires even when inserted that way.
+        # NOTE: deliberately NO MutationObserver — a permanent document-wide observer
+        # interfered with other plugins' re-renders (the plugin-manager list flickered
+        # away). Just re-apply the class a few times after the SPA settles.
         gr.HTML(
             "<img src=x style='display:none' onerror=\"(function(){"
             "var NAME=" + repr(PLUGIN_NAME) + ";"
             "function mark(){document.querySelectorAll("
             "'.tab-nav button,button[role=&quot;tab&quot;]').forEach(function(b){"
             "if(b.textContent.trim()===NAME)b.classList.add('replicant-tabbtn');});}"
-            "mark();new MutationObserver(mark).observe(document.body,"
-            "{childList:true,subtree:true});})()\">",
+            "[200,800,2000,4000].forEach(function(t){setTimeout(mark,t);});})()\">",
             elem_classes="replicant-hidden")
         with gr.Column(elem_id="replicant-root"):
             ui = wizard.build_wizard(model_choices=model_choices, lora_choices=lora_choices,
