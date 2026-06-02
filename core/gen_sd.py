@@ -155,9 +155,27 @@ def available() -> bool:
         return False
 
 
+def _apply_loras(pipe, loras):
+    """Set the loaded SD pipe's LoRAs to exactly ``loras`` ([{"name","weight"}]).
+
+    The pipe is cached across gens and ``apply_loras`` doesn't unload first, so we
+    always clear any previous selection here — that way deselecting LoRAs (or
+    switching to a different set) takes effect instead of accumulating."""
+    try:
+        pipe.remove_loras()  # clear whatever a prior gen applied (best-effort)
+    except Exception:
+        pass
+    if not loras:
+        return
+    try:
+        pipe.apply_loras(loras)
+    except Exception:
+        logger.warning("failed applying SD LoRAs %s", loras, exc_info=True)
+
+
 def generate_txt2img(checkpoint_path, prompt, negative, width, height, steps, cfg,
                      seed, sampler="DPM++ 2M", scheduler="", batch_size=1,
-                     clip_skip=1, out_dir=None, callback=None) -> list[str]:
+                     clip_skip=1, out_dir=None, callback=None, loras=None) -> list[str]:
     """Generate image(s) with an SD-family checkpoint; returns saved file paths."""
     import random as _random
     pipe = get_pipeline()
@@ -165,6 +183,7 @@ def generate_txt2img(checkpoint_path, prompt, negative, width, height, steps, cf
         seed = _random.randint(0, 2**31 - 1)
     with models.no_auto_download():  # never silently pull weights/configs
         pipe.load(checkpoint_path)
+        _apply_loras(pipe, loras)
         images = pipe.generate_txt2img(
             prompt=prompt, negative_prompt=negative or "",
             width=int(width), height=int(height), steps=int(steps),
@@ -186,7 +205,7 @@ def generate_txt2img(checkpoint_path, prompt, negative, width, height, steps, cf
 
 def generate_img2img(checkpoint_path, image_path, prompt, negative, width, height,
                      steps, cfg, seed, denoise=0.6, sampler="DPM++ 2M", scheduler="Karras",
-                     batch_size=1, clip_skip=1, out_dir=None) -> list[str]:
+                     batch_size=1, clip_skip=1, out_dir=None, loras=None) -> list[str]:
     """Reimagine an init image with an SD-family checkpoint (img2img)."""
     import random as _random
     pipe = get_pipeline()
@@ -194,6 +213,7 @@ def generate_img2img(checkpoint_path, image_path, prompt, negative, width, heigh
         seed = _random.randint(0, 2**31 - 1)
     with models.no_auto_download():
         pipe.load(checkpoint_path)
+        _apply_loras(pipe, loras)
         images = pipe.generate_img2img(
             image=image_path, prompt=prompt, negative_prompt=negative or "",
             denoising_strength=float(denoise), width=int(width), height=int(height),

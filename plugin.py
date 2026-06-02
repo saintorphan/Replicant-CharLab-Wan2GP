@@ -7,6 +7,7 @@ SupremeDiffusion's PySide6 character creator into Wan2GP's Gradio UI.
 NOTE: not an official plugin. Distribute via the plugin-manager "add from GitHub
 URL" flow; do not add to the bundled plugins.json without dbm's approval.
 """
+import random as _rng
 import traceback
 
 import gradio as gr
@@ -214,6 +215,35 @@ class ReplicantCharLab(WAN2GPPlugin):
         except Exception:
             return []
 
+    @staticmethod
+    def _native_lora_settings(selected, mult_str):
+        """activated_loras (filenames, as the dropdown supplies) + loras_multipliers
+        (space-separated) for native Wan2GP task settings. {} when none selected."""
+        names = list(selected or [])
+        if not names:
+            return {}
+        weights = [t.strip() for t in (mult_str or "").replace(";", ",").split(",")
+                   if t.strip()]
+        mult = " ".join(weights[:len(names)]) if weights else ""
+        return {"activated_loras": names, "loras_multipliers": mult}
+
+    @staticmethod
+    def _sd_lora_list(selected, mult_str):
+        """Selected SD LoRA paths + multiplier string → [{"name","weight"}] for the
+        SD pipeline (gen_sd._apply_loras). Empty list when none selected. The last
+        given multiplier fills any unspecified trailing LoRAs."""
+        sel = list(selected or [])
+        if not sel:
+            return []
+        try:
+            ws = [float(x) for x in (mult_str or "").replace(";", ",").split(",")
+                  if x.strip()]
+        except ValueError:
+            ws = []
+        return [{"name": p, "weight": (ws[i] if i < len(ws)
+                                       else (ws[-1] if ws else 1.0))}
+                for i, p in enumerate(sel)]
+
     def create_ui(self, api_session):
         self._api = api_session
         self._faceswap = None  # lazy FaceSwapPipeline
@@ -268,11 +298,13 @@ class ReplicantCharLab(WAN2GPPlugin):
         gen_sd._free_torch()
 
     def _gen_image(self, state, model_value, pos, neg, w, h, steps, cfg, seed,
-                   sampler, scheduler, clip_skip):
-        """One image via the routed backend. Returns list of saved paths."""
+                   sampler, scheduler, clip_skip, loras=None, lora_mult=""):
+        """One image via the routed backend (txt2img). Returns saved paths.
+        ``loras`` are the family-scoped selections from the settings bar."""
         backend, ident = discovery.parse_model_value(model_value)
         if backend == "native":
-            return self._gen_native(ident, pos, neg, w, h, steps, cfg, seed)
+            return self._gen_native(ident, pos, neg, w, h, steps, cfg, seed,
+                                    loras=loras, mult_str=lora_mult)
         if backend == "sd":
             if not self.acquire_gpu(state):
                 return []
@@ -280,7 +312,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                 return gen_sd.generate_txt2img(
                     ident, pos, neg, w, h, steps, cfg, seed,
                     sampler=sampler or "DPM++ 2M", scheduler=scheduler or "",
-                    clip_skip=int(clip_skip))
+                    clip_skip=int(clip_skip),
+                    loras=self._sd_lora_list(loras, lora_mult))
             finally:
                 self.release_gpu(state)
         raise gr.Error("Select a model from the dropdown first.")
@@ -301,12 +334,14 @@ class ReplicantCharLab(WAN2GPPlugin):
         return d if isinstance(d, dict) else {}
 
     def _gen_native(self, model_type, pos, neg, w, h, steps, cfg, seed, *,
-                    mode="txt2img", denoise=1.0, guide_path=None):
+                    mode="txt2img", denoise=1.0, guide_path=None,
+                    loras=None, mult_str=""):
         """One native (Flux/Z-Image/Qwen) image via Wan2GP's own task queue.
 
         mode: 'txt2img' (image_mode 1) or 'img2img' (image_mode 1 + image_guide +
         denoise). img2img needs a model with a guide-image input (inpaint_support)
         — Flux / Qwen-Image / Z-Image *Control*; plain z_image_base has none.
+        ``loras`` are this model's own LoRA filenames (+ ``mult_str`` multipliers).
         Native gens run in Wan2GP's queue — they do NOT take the plugin's SD GPU
         lock, so callers must not wrap this in acquire_gpu/release_gpu."""
         if int(seed) < 0:
@@ -318,6 +353,7 @@ class ReplicantCharLab(WAN2GPPlugin):
             "num_inference_steps": int(steps), "guidance_scale": float(cfg),
             "seed": int(seed), "video_length": 1, "batch_size": 1,
         })
+        settings.update(self._native_lora_settings(loras, mult_str))
         if mode == "img2img":
             if not self._native_caps(model_type).get("inpaint_support"):
                 raise gr.Error(
@@ -459,9 +495,11 @@ class ReplicantCharLab(WAN2GPPlugin):
         if not getattr(self, "_api", None):
             return
 
-        import random as _rng
+        # SET is the shared settings-bar inputs passed to every generation handler.
+        # loras + multipliers ride at the end so they reach base/pose/reimagine gen.
         SET = [s["model"], s["sampler"], s["scheduler"], s["steps"], s["cfg_scale"],
-               s["clip_skip"], s["seed"], s["width"], s["height"]]
+               s["clip_skip"], s["seed"], s["width"], s["height"],
+               s["loras"], s["lora_multipliers"]]
 
         # On model switch: scope LoRAs to the model's family AND auto-populate the
         # recommended cfg/steps/sampler/scheduler + portrait resolution.
@@ -496,7 +534,8 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         # -- base candidates --
         def _gen_base(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
-                      width, height, pos, neg, count, progress=gr.Progress()):
+                      width, height, loras, lora_mult, pos, neg, count,
+                      progress=gr.Progress()):
             if not (pos and pos.strip()):
                 raise gr.Error("Build or enhance a positive prompt on step 2 first.")
             self._release_faceswap()  # base gen is pure SD — free InsightFace VRAM
@@ -505,7 +544,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
                 progress((i, n), desc=f"Base {i + 1}/{n}")
                 files += self._gen_image(state, model, pos, neg, width, height,
-                                         steps, cfg, sd, sampler, scheduler, clip_skip)
+                                         steps, cfg, sd, sampler, scheduler, clip_skip,
+                                         loras=loras, lora_mult=lora_mult)
             if not files:
                 raise gr.Error("Generation produced no images.")
             return files, files[0]
@@ -530,8 +570,8 @@ class ReplicantCharLab(WAN2GPPlugin):
         # Reimagine the reference (img2img). SD-family runs locally; native
         # (Flux/Qwen/Z-Image) routes through Wan2GP's queue if it supports a guide.
         def _reimagine(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
-                       width, height, pos, neg, denoise, count, ref_img,
-                       progress=gr.Progress()):
+                       width, height, loras, lora_mult, pos, neg, denoise, count,
+                       ref_img, progress=gr.Progress()):
             backend, ident = discovery.parse_model_value(model)
             if not backend:
                 raise gr.Error("Select a model from the dropdown first.")
@@ -547,8 +587,10 @@ class ReplicantCharLab(WAN2GPPlugin):
                     progress((i, n), desc=f"Reimagining {i + 1}/{n} (img2img)")
                     files += self._gen_native(
                         ident, pos, neg, width, height, steps, cfg, sd,
-                        mode="img2img", denoise=float(denoise), guide_path=ref_img)
+                        mode="img2img", denoise=float(denoise), guide_path=ref_img,
+                        loras=loras, mult_str=lora_mult)
             else:  # sd
+                sd_loras = self._sd_lora_list(loras, lora_mult)
                 if not self.acquire_gpu(state):
                     return gr.update(), gr.update()
                 try:
@@ -558,7 +600,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                         files += gen_sd.generate_img2img(
                             ident, ref_img, pos, neg, width, height, steps, cfg, sd,
                             denoise=float(denoise), sampler=sampler, scheduler=scheduler,
-                            clip_skip=int(clip_skip))
+                            clip_skip=int(clip_skip), loras=sd_loras)
                 finally:
                     self.release_gpu(state)
             if not files:
@@ -871,7 +913,7 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         # -- Cohesion mode: gentle img2img normalize (own prompts, this subtab only) --
         def _normalize(state, model, src, pos, neg, focus, cfg, steps,
-                       progress=gr.Progress()):
+                       loras, lora_mult, progress=gr.Progress()):
             if not src:
                 raise gr.Error("No base image to normalize (set a base on step ②).")
             backend, ident = discovery.parse_model_value(model)
@@ -886,7 +928,8 @@ class ReplicantCharLab(WAN2GPPlugin):
             if backend == "native":  # img2img via Wan2GP's queue (no SD GPU lock)
                 outs = self._gen_native(ident, prompt, neg or "", int(w), int(h),
                                         int(steps), float(cfg), -1, mode="img2img",
-                                        denoise=0.4, guide_path=src)
+                                        denoise=0.4, guide_path=src,
+                                        loras=loras, mult_str=lora_mult)
                 return outs or gr.update()
             gen_sd.release_inpaint()
             if not self.acquire_gpu(state):
@@ -894,7 +937,8 @@ class ReplicantCharLab(WAN2GPPlugin):
             try:
                 outs = gen_sd.generate_img2img(
                     ident, src, prompt, neg or "", int(w), int(h),
-                    int(steps), float(cfg), -1, denoise=0.4, batch_size=4)
+                    int(steps), float(cfg), -1, denoise=0.4, batch_size=4,
+                    loras=self._sd_lora_list(loras, lora_mult))
                 return outs or gr.update()
             finally:
                 self.release_gpu(state)
@@ -903,7 +947,7 @@ class ReplicantCharLab(WAN2GPPlugin):
             _normalize,
             inputs=[self.state, s["model"], inp["cohesion_src"], inp["cohesion_prompt"],
                     inp["cohesion_neg"], inp["cohesion_focus"], inp["cohesion_cfg"],
-                    inp["cohesion_steps"]],
+                    inp["cohesion_steps"], s["loras"], s["lora_multipliers"]],
             outputs=[inp["cohesion_gallery"]])
 
         def _pick_cohesion(evt: gr.SelectData):
@@ -926,10 +970,10 @@ class ReplicantCharLab(WAN2GPPlugin):
             return ad
 
         def _gen_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
-                       width, height, pos, neg, sel_base, face_mode, body_mode,
-                       face_ref, body_ref, body_ip_scale, body_denoise,
-                       pose_face_adet, pfa_pos, pfa_neg, pose_body_adet, pba_pos, pba_neg,
-                       progress=gr.Progress()):
+                       width, height, loras, lora_mult, pos, neg, sel_base,
+                       face_mode, body_mode, face_ref, body_ref, body_ip_scale,
+                       body_denoise, pose_face_adet, pfa_pos, pfa_neg,
+                       pose_body_adet, pba_pos, pba_neg, progress=gr.Progress()):
             if not sel_base:
                 raise gr.Error("Generate/select a base image first (step 3).")
             if not (pos and pos.strip()):
@@ -966,7 +1010,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                 p_neg = poses.pose_negative_for(ps.distance, neg)
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
                 imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps, cfg,
-                                       sd, sampler, scheduler, clip_skip)
+                                       sd, sampler, scheduler, clip_skip,
+                                       loras=loras, lora_mult=lora_mult)
                 raw.append((imgs[0] if imgs else None,
                             {"distance": ps.distance, "angle": ps.angle,
                              "orientation": ps.orientation}))
@@ -995,10 +1040,10 @@ class ReplicantCharLab(WAN2GPPlugin):
         _N = len(poses.POSES)
 
         def _rerun_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
-                         width, height, pos, neg, sel_base, face_mode, body_mode,
-                         face_ref, body_ref, body_ip_scale, body_denoise,
-                         pose_face_adet, pfa_pos, pfa_neg, pose_body_adet, pba_pos, pba_neg,
-                         *rest, progress=gr.Progress()):
+                         width, height, loras, lora_mult, pos, neg, sel_base,
+                         face_mode, body_mode, face_ref, body_ref, body_ip_scale,
+                         body_denoise, pose_face_adet, pfa_pos, pfa_neg,
+                         pose_body_adet, pba_pos, pba_neg, *rest, progress=gr.Progress()):
             cur = list(rest[:_N])
             choices = list(rest[_N:2 * _N])
             colors = list(rest[2 * _N:3 * _N])
@@ -1048,15 +1093,17 @@ class ReplicantCharLab(WAN2GPPlugin):
                     if self._native_caps(ident).get("inpaint_support"):
                         imgs = self._gen_native(ident, p_pos, p_neg, pw, ph, steps,
                                                 cfg, sd, mode="img2img",
-                                                denoise=i2i_den, guide_path=img)
+                                                denoise=i2i_den, guide_path=img,
+                                                loras=loras, mult_str=lora_mult)
                     else:
                         imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph,
                                                steps, cfg, sd, sampler, scheduler,
-                                               clip_skip)
+                                               clip_skip, loras=loras, lora_mult=lora_mult)
                     new = imgs[0] if imgs else img
                 elif choice == "Regenerate (txt2img)":
                     imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps,
-                                           cfg, sd, sampler, scheduler, clip_skip)
+                                           cfg, sd, sampler, scheduler, clip_skip,
+                                           loras=loras, lora_mult=lora_mult)
                     new = imgs[0] if imgs else img
                 else:  # SD img2img — Cohesion = gentle low-CFG; Re-Roll = heavier
                     if choice == "Cohesion (img2img)":
@@ -1068,7 +1115,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                         try:
                             outs = gen_sd.generate_img2img(
                                 ident, img, p_pos, p_neg, pw, ph, i2i_steps,
-                                i2i_cfg, sd, denoise=i2i_den, clip_skip=int(clip_skip))
+                                i2i_cfg, sd, denoise=i2i_den, clip_skip=int(clip_skip),
+                                loras=self._sd_lora_list(loras, lora_mult))
                         finally:
                             self.release_gpu(state)
                         new = outs[0] if outs else img
