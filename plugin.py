@@ -1073,6 +1073,7 @@ class ReplicantCharLab(WAN2GPPlugin):
             self._release_faceswap()
             gen_sd.clear_abort()  # fresh abort state for this batch
             raw = []
+            display = [None] * len(P)  # streamed to the gallery as each pose lands
             for i, ps in enumerate(P):
                 spec = {"distance": ps.distance, "angle": ps.angle,
                         "orientation": ps.orientation}
@@ -1095,6 +1096,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                 # Interrupted mid-gen (master or this pose) → discard the partial.
                 img = None if gen_sd.should_skip(i) else (imgs[0] if imgs else None)
                 raw.append((img, spec))
+                display[i] = img
+                yield list(display)  # incremental: show each raw pose as it finishes
 
             out = paths.cache_dir() / "poses"
             # On a master abort, skip the (slow) swap pass and keep the raw gens.
@@ -1178,6 +1181,7 @@ class ReplicantCharLab(WAN2GPPlugin):
             base_clean = character.strip_base_framing(pos)  # see _gen_poses
             prev_snapshot = self._snapshot_prev(cur)  # for the per-pose ↩ undo
             final = list(cur)
+            display = list(cur)  # streamed to the gallery as each re-roll lands
             to_swap = []  # (orig_index, new_base_img, spec)
             gen_sd.clear_abort()  # fresh abort state for this batch
             for i, img in enumerate(cur):
@@ -1190,6 +1194,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                     continue
                 if choice == "Sharpen (no upscale)":  # whole-image crisp, no model/regen
                     final[i] = gen_sd.sharpen(img)
+                    display[i] = final[i]
+                    yield list(display)
                     continue
                 gen_sd.set_current_index(i)
                 # Use THIS slot's pose (index i ↔ P[i]) — NOT a distance+angle lookup,
@@ -1250,6 +1256,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                 if gen_sd.should_skip(i):  # interrupted mid-gen → keep the original
                     continue
                 to_swap.append((i, new, spec))
+                display[i] = new  # show the re-rolled image now; swap pass refines it
+                yield list(display)
             # On a master abort, skip the (slow) swap pass; persist what's done.
             if to_swap and not gen_sd.was_aborted():
                 items = [(im, sp) for (_, im, sp) in to_swap]
