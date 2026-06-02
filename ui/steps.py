@@ -338,7 +338,10 @@ def build_poses(visible: bool, init=None):
         _DD = ["Approve", "Sharpen (no upscale)", "Cohesion (img2img)",
                "Re-Roll (img2img)", "Regenerate (txt2img)"]
         c["pose_imgs"], c["pose_choices"], c["pose_color"] = [], [], []
-        c["pose_abort"] = []
+        c["pose_abort"], c["pose_undo"] = [], []
+        # Holds the pre-re-run image for each slot so the ↩ button can revert one
+        # pose to exactly what it was before the last Re-run.
+        c["pose_prev"] = gr.State(list(saved))
         for r in range(0, n, 4):
             with gr.Row():
                 for idx in range(r, min(r + 4, n)):
@@ -353,6 +356,8 @@ def build_poses(visible: bool, init=None):
                                              value=(_ch[idx] if idx < len(_ch)
                                                     and _ch[idx] in _DD
                                                     else "Re-Roll (img2img)"))
+                            un = gr.Button("↩", scale=0, min_width=40,
+                                           elem_classes="replicant-pose-undo")
                             ab = gr.Button("⛔", variant="stop", scale=0, min_width=40,
                                            elem_classes="replicant-pose-abort")
                         cm = gr.Checkbox(label="Color match", container=False,
@@ -361,6 +366,8 @@ def build_poses(visible: bool, init=None):
                         c["pose_imgs"].append(img)
                         c["pose_choices"].append(dd)
                         c["pose_color"].append(cm)
+                        c["pose_undo"].append(un)
+                        c["pose_abort"].append(ab)
                         c["pose_abort"].append(ab)
     return g, c
 

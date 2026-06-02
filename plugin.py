@@ -528,6 +528,26 @@ class ReplicantCharLab(WAN2GPPlugin):
         wizard_state.save(st)
         return out
 
+    def _snapshot_prev(self, images):
+        """Copy the current pose images to a SEPARATE 'prev' dir before a re-run
+        overwrites the canonical ones, so the per-pose ↩ undo can restore them.
+        Returns the snapshot paths (None preserved)."""
+        import os
+        import shutil
+        d = paths.cache_dir() / "persist" / "poses_prev"
+        shutil.rmtree(d, ignore_errors=True); d.mkdir(parents=True, exist_ok=True)
+        out = []
+        for i, p in enumerate(images or []):
+            if p and isinstance(p, str) and os.path.isfile(p):
+                dst = d / f"prev_{i:02d}.png"
+                try:
+                    shutil.copy2(p, dst); out.append(str(dst))
+                except Exception:
+                    out.append(None)
+            else:
+                out.append(None)
+        return out
+
     def _wire_generation(self, ui):
         c, s = ui["components"], ui["settings"]
         base, prm, swap, pose = c["base"], c["setup"], c["swap"], c["poses"]
@@ -1156,6 +1176,7 @@ class ReplicantCharLab(WAN2GPPlugin):
             specs = (pstate or {}).get("specs", [])
             P = poses.POSES
             base_clean = character.strip_base_framing(pos)  # see _gen_poses
+            prev_snapshot = self._snapshot_prev(cur)  # for the per-pose ↩ undo
             final = list(cur)
             to_swap = []  # (orig_index, new_base_img, spec)
             gen_sd.clear_abort()  # fresh abort state for this batch
@@ -1242,13 +1263,31 @@ class ReplicantCharLab(WAN2GPPlugin):
                         sw = gen_sd.color_match(sw, sel_base, body_only=True)
                     final[oi] = sw
             saved = self._persist_poses(final, specs)
-            return saved + [{"poses": saved, "specs": specs}]
+            return saved + [{"poses": saved, "specs": specs}, prev_snapshot]
 
         pose["rerun"].click(
             _rerun_poses,
             inputs=pose_in + pose["pose_imgs"] + pose["pose_choices"] + pose["pose_color"]
             + [ui["poses_state"]],
-            outputs=pose_out)
+            outputs=pose_out + [pose["pose_prev"]])
+
+        # Per-pose ↩ undo: revert one slot to its pre-re-run image (+ sync state).
+        def _make_pose_undo(i):
+            def _h(prev, pstate):
+                if not prev or i >= len(prev) or not prev[i]:
+                    return gr.update(), gr.update()
+                p = dict(pstate or {})
+                gallery = list(p.get("poses", []))
+                while len(gallery) <= i:
+                    gallery.append(None)
+                gallery[i] = prev[i]
+                p["poses"] = gallery
+                return prev[i], p
+            return _h
+        for _i, _ub in enumerate(pose["pose_undo"]):
+            _ub.click(_make_pose_undo(_i),
+                      inputs=[pose["pose_prev"], ui["poses_state"]],
+                      outputs=[pose["pose_imgs"][_i], ui["poses_state"]])
 
         # "Use Reference" is only offered when a face/body reference exists on Human Clone.
         def _ref_opts(src, base):
