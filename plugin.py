@@ -31,41 +31,44 @@ PLUGIN_NAME = "Replicant Character Lab"
 # Draw a colored status badge in each pose thumbnail's corner from the state array
 # (none=grey / approve=green ✓ / regen=red ✗). gr.Gallery has no per-item overlay API,
 # so we paint it in the DOM; pointer-events:none keeps clicks reaching the thumbnail.
-_POSE_BADGE_JS = """
-(states) => {
-  setTimeout(() => {
-    const root = document.querySelector('#replicant-pose-out');
-    if (!root) return;
-    const box = document.querySelector('#replicant-pose-click textarea') ||
-                document.querySelector('#replicant-pose-click input');
-    root.querySelectorAll('.thumbnail-item').forEach((el, i) => {
-      el.style.position = 'relative';
-      let b = el.querySelector('.rep-badge');
-      if (!b) {
-        b = document.createElement('div');
-        b.className = 'rep-badge';
-        b.style.cssText = 'position:absolute;bottom:8px;right:8px;width:30px;height:30px;' +
-          'border-radius:50%;display:flex;align-items:center;justify-content:center;' +
-          'font-weight:700;font-size:18px;color:#fff;z-index:20;cursor:pointer;' +
-          'border:2px solid #fff;box-shadow:0 0 5px rgba(0,0,0,.8);';
-        el.appendChild(b);
-        b.addEventListener('click', (e) => {
-          e.stopPropagation(); e.preventDefault();
-          if (box) {
-            box.value = i + ':' + Date.now();
-            box.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-        }, true);
-      }
-      const s = (states && states[i]) || 'none';
-      if (s === 'approve') { b.style.background = '#22c55e'; b.textContent = '\\u2713'; }
-      else if (s === 'regen') { b.style.background = '#ef4444'; b.textContent = '\\u2717'; }
-      else { b.style.background = 'rgba(120,120,120,.85)'; b.textContent = '\\u2022'; }
-    });
-  }, 80);
-  return states;
-}
-"""
+# Push the current selection states to the persistent badge drawer (defined by the
+# boot script below) and repaint.
+_POSE_BADGE_JS = ("(states)=>{window._repPoseStates=states||[];"
+                  "if(window.repDrawBadges)window.repDrawBadges();return states;}")
+
+# Persistent boot: defines window.repDrawBadges (paints a clickable corner badge on
+# every pose thumbnail, click writes "<index>:<ts>" to the hidden relay) and a
+# MutationObserver so badges appear whenever the gallery renders — including on reload,
+# where no .change fires. Injected via <img onerror> (gr.HTML doesn't run <script>).
+_POSE_BADGE_BOOT = (
+    "<img src=x style='display:none' onerror=\"(function(){"
+    "if(window._repBadgeInit)return; window._repBadgeInit=true;"
+    "window._repPoseStates=window._repPoseStates||[];"
+    "window.repDrawBadges=function(){"
+    "var root=document.querySelector('#replicant-pose-out'); if(!root)return;"
+    "root.querySelectorAll('.thumbnail-item').forEach(function(el,i){"
+    "el.style.position='relative';"
+    "var b=el.querySelector('.rep-badge');"
+    "if(!b){b=document.createElement('div');b.className='rep-badge';"
+    "b.style.cssText='position:absolute;bottom:8px;right:8px;width:30px;height:30px;"
+    "border-radius:50%;display:flex;align-items:center;justify-content:center;"
+    "font-weight:700;font-size:18px;color:#fff;z-index:20;cursor:pointer;"
+    "border:2px solid #fff;box-shadow:0 0 5px rgba(0,0,0,.8);';"
+    "el.appendChild(b);"
+    "b.addEventListener('click',function(e){e.stopPropagation();e.preventDefault();"
+    "var bx=document.querySelector('#replicant-pose-click textarea')"
+    "||document.querySelector('#replicant-pose-click input');"
+    "if(bx){bx.value=i+':'+Date.now();bx.dispatchEvent(new Event('input',{bubbles:true}));}"
+    "},true);}"
+    "var s=(window._repPoseStates&&window._repPoseStates[i])||'none';"
+    "if(s==='approve'){b.style.background='#22c55e';b.textContent='\\u2713';}"
+    "else if(s==='regen'){b.style.background='#ef4444';b.textContent='\\u2717';}"
+    "else{b.style.background='rgba(120,120,120,.85)';b.textContent='\\u2022';}"
+    "});};"
+    "new MutationObserver(function(){window.repDrawBadges();})"
+    ".observe(document.body,{childList:true,subtree:true});"
+    "setInterval(function(){window.repDrawBadges();},1200);"
+    "})()\">")
 
 
 class ReplicantCharLab(WAN2GPPlugin):
@@ -164,6 +167,8 @@ class ReplicantCharLab(WAN2GPPlugin):
             "mark();new MutationObserver(mark).observe(document.body,"
             "{childList:true,subtree:true});})()\">",
             elem_classes="replicant-hidden")
+        # Persistent pose-badge drawer (clickable corner badges on the pose gallery).
+        gr.HTML(_POSE_BADGE_BOOT, elem_classes="replicant-hidden")
         with gr.Column(elem_id="replicant-root"):
             ui = wizard.build_wizard(model_choices=model_choices, lora_choices=lora_choices,
                                      init=init)
