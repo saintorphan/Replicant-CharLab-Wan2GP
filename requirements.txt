@@ -1,13 +1,28 @@
 # Replicant Character Lab — runtime deps.
-# Wan2GP already provides gradio, torch, Pillow, numpy.
 #
+# Wan2GP already provides gradio, torch, torchvision, Pillow and numpy. Everything
+# below is needed by the bundled SD-family backend (core/sd/) and the swap/refine
+# pipeline. All are lazily imported, so the plugin still loads if one is absent —
+# but the SDXL/body-swap features need them present.
+
+# SD / SDXL / Pony / Illustrious generation + img2img + inpaint + IP-Adapter.
+# Runs in-plugin via 🤗 diffusers (see core/sd/) — NO external checkout required.
+diffusers
+transformers
+accelerate
+safetensors
+
 # Face swap + body swap are REQUIRED: they are configured on the Face/Body step
 # and applied mandatorily to every generated pose, plus used for dataset
 # head/upper-body crops. InsightFace is therefore a hard dependency.
 insightface
 onnxruntime-gpu
+onnx
+opencv-python
+scikit-image   # Reinhard LAB colour match between poses
 
 # BiRefNet (body-swap segmentation) custom modeling code needs kornia
 kornia
 controlnet_aux  # OpenPose preprocessor (body swap)
 ultralytics     # YOLOv8 (ADetailer / person detection)
+mediapipe       # hand landmarks → preserve base hands during body swap

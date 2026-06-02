@@ -25,9 +25,9 @@ from . import paths
 
 logger = logging.getLogger("replicant.models")
 
-_SD_CHECKOUT = os.environ.get(
-    "REPLICANT_SD_PATH", str(Path.home() / "Projects" / "SupremeDiffusionQt"))
-_BIREFNET_DIR = str(Path(_SD_CHECKOUT) / "models" / "birefnet")
+# BiRefNet (body-swap segmentation) downloads into the plugin's own models dir;
+# segment_foreground falls back to the HF model id if it isn't present there.
+_BIREFNET_DIR = str(paths.models_dir() / "birefnet")
 _BUFFALO_DIR = str(Path.home() / ".insightface" / "models" / "buffalo_l")
 
 

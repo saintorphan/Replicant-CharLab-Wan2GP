@@ -38,17 +38,22 @@ plugin creates its data directories on first run.
 
 ### Data layout
 
-Created under `<wan2gp_root>/character_lab/` (all three roots are configurable
-and persisted from the wizard's **Prerequisites → Directories** panel):
+Character-Lab data lives under `<wan2gp_root>/character_lab/`; shared model
+resources live under `<wan2gp_root>/orphansuite/` (cross-plugin via
+`.orphansuite.json`). All roots are configurable and persisted from the wizard's
+**OrphanSuite** panel:
 
 ```
 character_lab/
 ├── characters/<Name>/   character.json, base.png, poses/
-├── datasets/<Name>/     video512/ highres/ full/ face/  (NNN.png + NNN.txt)
-└── models/face/         downloaded swap/enhancer models
+└── datasets/<Name>/     video512/ highres/ full/ face/  (NNN.png + NNN.txt)
+orphansuite/             shared across saintorphan plugins
+├── models/face/         downloaded swap/enhancer models
+├── sdxl_models/         SDXL/Pony/Illustrious checkpoints
+└── sdxl_loras/          SDXL-family LoRAs
 ```
 
-### Models (downloaded from the Prerequisites → Models panel)
+### Models (downloaded from the OrphanSuite → Models panel)
 
 | Model | Required | Source |
 |-------|----------|--------|

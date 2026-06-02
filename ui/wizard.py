@@ -100,7 +100,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
     comps_ctx_relay = gr.Textbox(value="", elem_id="replicant-ctx-relay",
                                  elem_classes="replicant-hidden")
 
-    # Prerequisites (directories + models) ----------------------------------
+    # OrphanSuite (Character-Lab folders + shared models/folders + downloads) -
     prereqs = build_prereqs()
 
     # Shared generation settings (Replicant-owned, used across pages) --------

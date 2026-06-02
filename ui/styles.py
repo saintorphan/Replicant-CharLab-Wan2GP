@@ -47,7 +47,7 @@ button.replicant-tabbtn {
 
 #replicant-nav { margin-top: 14px; display: flex; justify-content: space-between; }
 
-/* Prerequisites + its Directories/Models sub-accordion headers: 2x, bold */
+/* OrphanSuite + its folders/models sub-accordion headers: 2x, bold */
 .replicant-acc > .label-wrap span,
 .replicant-acc > button.label-wrap span { font-size: 2em !important; font-weight: 700 !important; }
 

@@ -21,7 +21,8 @@ try:  # GPU arbitration with the main Video Generator + other plugins (e.g. Imag
 except Exception:  # pragma: no cover
     _HAVE_LOCKS = False
 
-from .core import character, discovery, faceswap, gen_sd, models, paths, poses
+from .core import (character, discovery, faceswap, gen_sd, models, paths, poses,
+                   presets)
 from .ui import wizard
 from .ui.styles import CSS
 
@@ -127,6 +128,7 @@ class ReplicantCharLab(WAN2GPPlugin):
         self.request_global("get_model_def")
         self.request_global("get_default_settings")  # base/pose image generation
         self.request_global("models_def")             # list native image models
+        self.request_global("get_lora_dir")           # per-native-model LoRA folder
 
         self.add_tab(tab_id=PLUGIN_ID, label=PLUGIN_NAME,
                      component_constructor=self.create_ui)
@@ -185,13 +187,30 @@ class ReplicantCharLab(WAN2GPPlugin):
         miss = models.missing(keys)
         if miss:
             raise gr.Error(f"{what} needs models you haven't downloaded yet — get them "
-                           f"in Prerequisites → Models first: " + ", ".join(miss))
+                           f"in OrphanSuite → Models first: " + ", ".join(miss))
 
     # -- UI -----------------------------------------------------------------
     def _native_model_types(self):
         defs = getattr(self, "models_def", None) or {}
         try:
             return [mt for mt in defs if discovery.categorize_native(mt)]
+        except Exception:
+            return []
+
+    def _native_loras(self, model_type):
+        """LoRA files in this native model's own Wan2GP LoRA dir → dropdown
+        (label, value). Each native family (Flux/Z-Image/Qwen) has its own dir, so
+        this inherently shows only that family's LoRAs."""
+        getter = getattr(self, "get_lora_dir", None)
+        if not callable(getter):
+            return []
+        try:
+            import os
+            d = getter(model_type)
+            if not (d and os.path.isdir(d)):
+                return []
+            return [(f, f) for f in sorted(os.listdir(d))
+                    if f.lower().endswith((".safetensors", ".sft", ".lora", ".ckpt", ".pt"))]
         except Exception:
             return []
 
@@ -253,19 +272,7 @@ class ReplicantCharLab(WAN2GPPlugin):
         """One image via the routed backend. Returns list of saved paths."""
         backend, ident = discovery.parse_model_value(model_value)
         if backend == "native":
-            settings = dict(self.get_default_settings(ident))
-            settings.update({
-                "model_type": ident, "image_mode": 1, "prompt": pos,
-                "negative_prompt": neg or "", "resolution": f"{int(w)}x{int(h)}",
-                "num_inference_steps": int(steps), "guidance_scale": float(cfg),
-                "seed": int(seed), "video_length": 1, "batch_size": 1,
-            })
-            result = self._api.submit_task(settings).result()
-            if result.success and result.generated_files:
-                return list(result.generated_files)
-            if result.errors:
-                raise gr.Error(str(list(result.errors)[0]))
-            return []
+            return self._gen_native(ident, pos, neg, w, h, steps, cfg, seed)
         if backend == "sd":
             if not self.acquire_gpu(state):
                 return []
@@ -277,6 +284,66 @@ class ReplicantCharLab(WAN2GPPlugin):
             finally:
                 self.release_gpu(state)
         raise gr.Error("Select a model from the dropdown first.")
+
+    def _native_caps(self, model_type) -> dict:
+        """The native model's capability/def dict (inpaint_support = has a
+        guide-image input, …). Prefer get_model_def; fall back to models_def."""
+        getter = getattr(self, "get_model_def", None)
+        if callable(getter):
+            try:
+                d = getter(model_type)
+                if isinstance(d, dict):
+                    return d
+            except Exception:
+                pass
+        defs = getattr(self, "models_def", None) or {}
+        d = defs.get(model_type)
+        return d if isinstance(d, dict) else {}
+
+    def _gen_native(self, model_type, pos, neg, w, h, steps, cfg, seed, *,
+                    mode="txt2img", denoise=1.0, guide_path=None):
+        """One native (Flux/Z-Image/Qwen) image via Wan2GP's own task queue.
+
+        mode: 'txt2img' (image_mode 1) or 'img2img' (image_mode 1 + image_guide +
+        denoise). img2img needs a model with a guide-image input (inpaint_support)
+        — Flux / Qwen-Image / Z-Image *Control*; plain z_image_base has none.
+        Native gens run in Wan2GP's queue — they do NOT take the plugin's SD GPU
+        lock, so callers must not wrap this in acquire_gpu/release_gpu."""
+        if int(seed) < 0:
+            seed = _rng.randint(0, 2**31 - 1)
+        settings = dict(self.get_default_settings(model_type))
+        settings.update({
+            "model_type": model_type, "image_mode": 1, "prompt": pos,
+            "negative_prompt": neg or "", "resolution": f"{int(w)}x{int(h)}",
+            "num_inference_steps": int(steps), "guidance_scale": float(cfg),
+            "seed": int(seed), "video_length": 1, "batch_size": 1,
+        })
+        if mode == "img2img":
+            if not self._native_caps(model_type).get("inpaint_support"):
+                raise gr.Error(
+                    f"'{model_type}' has no guide-image input, so it can't img2img. "
+                    "Use a Flux/Qwen-Image model, a Z-Image *Control* model, or an "
+                    "SDXL/Pony/Illustrious checkpoint.")
+            # "VG": V = use the guide image, G = honour denoising_strength (partial
+            # denoise). Without "G", wgp forces denoise=1.0 (full regen, ignoring
+            # the slider); no "A" so no mask is required → a true img2img.
+            settings.update({"image_guide": guide_path,
+                             "denoising_strength": float(denoise),
+                             "video_prompt_type": "VG"})
+        try:
+            result = self._api.submit_task(settings).result()
+        except Exception as e:
+            if "generation in progress" in str(e).lower():
+                raise gr.Error(
+                    "Another generation is still pending. Native (Flux/Z-Image/Qwen) "
+                    "gens run in Wan2GP's queue and PAUSE if the browser loses focus — "
+                    "click the Video Generator tab to let it finish, then try again.")
+            raise
+        if result.success and result.generated_files:
+            return list(result.generated_files)
+        if result.errors:
+            raise gr.Error(str(list(result.errors)[0]))
+        return []
 
     def _pose_swaps(self, state, ident, items, pos, neg, do_body, body_src, body_ip,
                     body_den, apply_face, face_src, out, progress, start_idx=0, adet=None):
@@ -396,13 +463,36 @@ class ReplicantCharLab(WAN2GPPlugin):
         SET = [s["model"], s["sampler"], s["scheduler"], s["steps"], s["cfg_scale"],
                s["clip_skip"], s["seed"], s["width"], s["height"]]
 
-        # LoRAs are family-specific (Pony≠Illustrious≠SDXL) — filter to the model's family.
-        def _loras_for(model_value):
-            up = gr.update(choices=discovery.lora_choices(
-                family=discovery.model_family(model_value)), value=[])
-            return up, up  # settings bar + inpaint LoRAs accordion
-        s["model"].change(_loras_for, inputs=[s["model"]],
-                          outputs=[s["loras"], c["inpaint"]["inpaint_loras"]])
+        # On model switch: scope LoRAs to the model's family AND auto-populate the
+        # recommended cfg/steps/sampler/scheduler + portrait resolution.
+        #   - native (Flux/Z-Image/Qwen): LoRAs from that model's own Wan2GP dir.
+        #   - SD (SDXL/Pony/Illustrious): LoRAs filtered by name-based family.
+        # setting_keys maps the preset dict onto the settings-bar controls.
+        setting_keys = ["sampler", "scheduler", "steps", "cfg", "clip_skip",
+                        "width", "height"]
+        _key_to_ctl = {"cfg": "cfg_scale"}  # preset key → settings-bar component key
+
+        def _on_model(model_value):
+            backend, ident = discovery.parse_model_value(model_value)
+            if backend == "native":
+                cat = discovery.categorize_native(ident) or "Native"
+                lora_up = gr.update(choices=self._native_loras(ident), value=[],
+                                    label=f"{cat} LoRAs")
+            elif backend == "sd":
+                fam = discovery.model_family(model_value)
+                lora_up = gr.update(choices=discovery.lora_choices(family=fam),
+                                    value=[], label=f"{fam} LoRAs" if fam else "LoRAs")
+            else:
+                lora_up = gr.update(choices=[], value=[], label="LoRAs")
+            rec = presets.for_model(model_value, self.get_default_settings)
+            ups = [gr.update(value=rec[k]) if k in rec else gr.update()
+                   for k in setting_keys]
+            return [lora_up, lora_up] + ups  # settings bar + inpaint LoRAs, then settings
+
+        s["model"].change(
+            _on_model, inputs=[s["model"]],
+            outputs=[s["loras"], c["inpaint"]["inpaint_loras"]]
+            + [s[_key_to_ctl.get(k, k)] for k in setting_keys])
 
         # -- base candidates --
         def _gen_base(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
@@ -437,31 +527,40 @@ class ReplicantCharLab(WAN2GPPlugin):
         base["use_as_base"].click(lambda p: p or gr.update(), inputs=[base["picked"]],
                                   outputs=[base["selected_base"]])
 
-        # Reimagine the reference (img2img) — SD-family only.
+        # Reimagine the reference (img2img). SD-family runs locally; native
+        # (Flux/Qwen/Z-Image) routes through Wan2GP's queue if it supports a guide.
         def _reimagine(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
                        width, height, pos, neg, denoise, count, ref_img,
                        progress=gr.Progress()):
             backend, ident = discovery.parse_model_value(model)
-            if backend != "sd":
-                raise gr.Error("Reimagine (img2img) needs an SDXL/Pony/Illustrious model.")
+            if not backend:
+                raise gr.Error("Select a model from the dropdown first.")
             if not ref_img:
                 raise gr.Error("No reference image to reimagine (add one on step 1).")
             if not (pos and pos.strip()):
                 raise gr.Error("Build or enhance a positive prompt on step 2 first.")
             self._release_faceswap()
-            if not self.acquire_gpu(state):
-                return gr.update(), gr.update()
             files, n = [], int(count)
-            try:
+            if backend == "native":
                 for i in range(n):
                     sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
                     progress((i, n), desc=f"Reimagining {i + 1}/{n} (img2img)")
-                    files += gen_sd.generate_img2img(
-                        ident, ref_img, pos, neg, width, height, steps, cfg, sd,
-                        denoise=float(denoise), sampler=sampler, scheduler=scheduler,
-                        clip_skip=int(clip_skip))
-            finally:
-                self.release_gpu(state)
+                    files += self._gen_native(
+                        ident, pos, neg, width, height, steps, cfg, sd,
+                        mode="img2img", denoise=float(denoise), guide_path=ref_img)
+            else:  # sd
+                if not self.acquire_gpu(state):
+                    return gr.update(), gr.update()
+                try:
+                    for i in range(n):
+                        sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
+                        progress((i, n), desc=f"Reimagining {i + 1}/{n} (img2img)")
+                        files += gen_sd.generate_img2img(
+                            ident, ref_img, pos, neg, width, height, steps, cfg, sd,
+                            denoise=float(denoise), sampler=sampler, scheduler=scheduler,
+                            clip_skip=int(clip_skip))
+                finally:
+                    self.release_gpu(state)
             if not files:
                 raise gr.Error("img2img produced no images.")
             return files, files[0]
@@ -776,15 +875,20 @@ class ReplicantCharLab(WAN2GPPlugin):
             if not src:
                 raise gr.Error("No base image to normalize (set a base on step ②).")
             backend, ident = discovery.parse_model_value(model)
-            if backend != "sd":
-                raise gr.Error("Cohesion needs an SDXL/Pony/Illustrious model selected.")
+            if not backend:
+                raise gr.Error("Select a model from the dropdown first.")
             from PIL import Image
             w, h = Image.open(src).size
             prompt = (pos or "").strip()
             if focus and focus.strip():
                 prompt = (prompt + ", " + focus.strip()).strip(" ,")
-            gen_sd.release_inpaint()
             self._release_faceswap()
+            if backend == "native":  # img2img via Wan2GP's queue (no SD GPU lock)
+                outs = self._gen_native(ident, prompt, neg or "", int(w), int(h),
+                                        int(steps), float(cfg), -1, mode="img2img",
+                                        denoise=0.4, guide_path=src)
+                return outs or gr.update()
+            gen_sd.release_inpaint()
             if not self.acquire_gpu(state):
                 return gr.update()
             try:
@@ -937,8 +1041,20 @@ class ReplicantCharLab(WAN2GPPlugin):
                     else (min(width, height), max(width, height))
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
                 img2img = choice in ("Cohesion (img2img)", "Re-Roll (img2img)")
-                if choice == "Regenerate (txt2img)" or (img2img and backend != "sd"):
-                    # fresh txt2img (also the fallback when a native model can't img2img)
+                if img2img and backend == "native":
+                    # Native img2img through Wan2GP's queue when the model has a
+                    # guide-image input; else fall back to a fresh txt2img.
+                    i2i_den = 0.35 if choice == "Cohesion (img2img)" else 0.6
+                    if self._native_caps(ident).get("inpaint_support"):
+                        imgs = self._gen_native(ident, p_pos, p_neg, pw, ph, steps,
+                                                cfg, sd, mode="img2img",
+                                                denoise=i2i_den, guide_path=img)
+                    else:
+                        imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph,
+                                               steps, cfg, sd, sampler, scheduler,
+                                               clip_skip)
+                    new = imgs[0] if imgs else img
+                elif choice == "Regenerate (txt2img)":
                     imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps,
                                            cfg, sd, sampler, scheduler, clip_skip)
                     new = imgs[0] if imgs else img
