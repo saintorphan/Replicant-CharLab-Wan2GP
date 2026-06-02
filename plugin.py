@@ -198,6 +198,38 @@ class ReplicantCharLab(WAN2GPPlugin):
         except Exception:
             return []
 
+    def _loras_for_model(self, model_value):
+        """Family-scoped LoRA choices [(label, value)] for a model dropdown value:
+        native → the model's own Wan2GP LoRA dir; SD → name-based family filter."""
+        backend, ident = discovery.parse_model_value(model_value or "")
+        if backend == "native":
+            return self._native_loras(ident)
+        if backend == "sd":
+            return discovery.lora_choices(family=discovery.model_family(model_value))
+        return []
+
+    def _reconcile_loras_to_model(self, ui):
+        """On load the persisted LoRA selection is restored regardless of the
+        restored model, but LoRAs are family-specific — so a selection saved with a
+        different family/backend would show as ACTIVE for the wrong model (e.g. an
+        SDXL LoRA active under a Z-Image model). Re-point the LoRA dropdowns to the
+        restored model's family and drop any selected LoRA that isn't valid for it
+        (valid ones are kept). _on_model handles this on user model changes; this
+        does it for the initial render, which has no change event."""
+        s = ui.get("settings") or {}
+        model_dd = s.get("model")
+        if model_dd is None:
+            return
+        choices = self._loras_for_model(getattr(model_dd, "value", "") or "")
+        valid = {v for _, v in choices}
+        inp = (ui.get("components") or {}).get("inpaint") or {}
+        for dd in (s.get("loras"), inp.get("inpaint_loras")):
+            if dd is None:
+                continue
+            dd.choices = list(choices)
+            cur = dd.value if isinstance(dd.value, list) else ([dd.value] if dd.value else [])
+            dd.value = [v for v in cur if v in valid]
+
     def _native_loras(self, model_type):
         """LoRA files in this native model's own Wan2GP LoRA dir → dropdown
         (label, value). Each native family (Flux/Z-Image/Qwen) has its own dir, so
@@ -274,6 +306,7 @@ class ReplicantCharLab(WAN2GPPlugin):
         with gr.Column(elem_id="replicant-root"):
             ui = wizard.build_wizard(model_choices=model_choices, lora_choices=lora_choices,
                                      init=init)
+        self._reconcile_loras_to_model(ui)
         self._wire_enhancer(ui)
         self._wire_generation(ui)
         self._wire_context_menu(ui)
