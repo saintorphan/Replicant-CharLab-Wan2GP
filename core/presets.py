@@ -172,18 +172,23 @@ def recommended_resolution(model_value, get_default_settings=None) -> str:
 
 
 def resolution_tiers(model_value, get_default_settings=None) -> list:
-    """Dropdown choices [(label, 'WxH')] of portrait resolutions at the family's
-    trained aspect — a few size tiers around the recommended one. The user can pick
-    a smaller/larger size but NOT a different aspect (Replicant locks aspect)."""
+    """Dropdown choices [(label, 'WxH')] of portrait resolutions that all hold the
+    family's trained aspect — a few size tiers around the recommended one. The user
+    can pick a smaller/larger size but NOT a different aspect (Replicant locks it).
+    Height is derived from width at the exact aspect and snapped to /16, so every
+    tier stays on-aspect (unlike snapping each dim independently)."""
     pw, ph = _portrait_base(model_value, get_default_settings)
+    ar = ph / pw  # portrait aspect (>1); H = W * ar
     seen, tiers = set(), []
     for scale in (0.66, 0.83, 1.0, 1.2, 1.4):
-        w, h = _snap(pw * scale), _snap(ph * scale)
+        w = _snap(pw * scale, step=16)
+        h = _snap(round(w * ar), step=16)
         if (w, h) not in seen:
             seen.add((w, h))
             tiers.append((w, h))
-    if (pw, ph) not in seen:
+    if (pw, ph) not in seen:  # always include the exact recommended
         tiers.append((pw, ph))
+        seen.add((pw, ph))
     tiers.sort(key=lambda wh: wh[0] * wh[1])
     return [(f"{w}×{h}" + (" — recommended" if (w, h) == (pw, ph) else ""), f"{w}x{h}")
             for (w, h) in tiers]
