@@ -298,13 +298,14 @@ class ReplicantCharLab(WAN2GPPlugin):
         gen_sd._free_torch()
 
     def _gen_image(self, state, model_value, pos, neg, w, h, steps, cfg, seed,
-                   sampler, scheduler, clip_skip, loras=None, lora_mult=""):
+                   sampler, scheduler, clip_skip, loras=None, lora_mult="", api=None):
         """One image via the routed backend (txt2img). Returns saved paths.
-        ``loras`` are the family-scoped selections from the settings bar."""
+        ``loras`` are the family-scoped selections from the settings bar. ``api``
+        is forwarded to the native path (see _gen_native re: webui-wrapping)."""
         backend, ident = discovery.parse_model_value(model_value)
         if backend == "native":
             return self._gen_native(ident, pos, neg, w, h, steps, cfg, seed,
-                                    loras=loras, mult_str=lora_mult)
+                                    loras=loras, mult_str=lora_mult, api=api)
         if backend == "sd":
             if not self.acquire_gpu(state):
                 return []
@@ -335,7 +336,7 @@ class ReplicantCharLab(WAN2GPPlugin):
 
     def _gen_native(self, model_type, pos, neg, w, h, steps, cfg, seed, *,
                     mode="txt2img", denoise=1.0, guide_path=None,
-                    loras=None, mult_str=""):
+                    loras=None, mult_str="", api=None):
         """One native (Flux/Z-Image/Qwen) image via Wan2GP's own task queue.
 
         mode: 'txt2img' (image_mode 1) or 'img2img' (image_mode 1 + image_guide +
@@ -343,7 +344,12 @@ class ReplicantCharLab(WAN2GPPlugin):
         — Flux / Qwen-Image / Z-Image *Control*; plain z_image_base has none.
         ``loras`` are this model's own LoRA filenames (+ ``mult_str`` multipliers).
         Native gens run in Wan2GP's queue — they do NOT take the plugin's SD GPU
-        lock, so callers must not wrap this in acquire_gpu/release_gpu."""
+        lock, so callers must not wrap this in acquire_gpu/release_gpu.
+
+        ``api`` MUST be the session the click handler closed over: Wan2GP only
+        drives a submitted task when it detects the api session in the handler's
+        closure (see api_webui._callback_uses_api_session) — otherwise the task is
+        admitted to the queue but never runs (silent hang)."""
         if int(seed) < 0:
             seed = _rng.randint(0, 2**31 - 1)
         settings = dict(self.get_default_settings(model_type))
@@ -367,7 +373,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                              "denoising_strength": float(denoise),
                              "video_prompt_type": "VG"})
         try:
-            result = self._api.submit_task(settings).result()
+            result = (api or self._api).submit_task(settings).result()
         except Exception as e:
             if "generation in progress" in str(e).lower():
                 raise gr.Error(
@@ -495,6 +501,12 @@ class ReplicantCharLab(WAN2GPPlugin):
         if not getattr(self, "_api", None):
             return
 
+        # Wan2GP only DRIVES a submitted native task when it sees the api session in
+        # the click handler's closure (api_webui._callback_uses_api_session); without
+        # it the task is admitted to the queue but never runs. So every handler that
+        # can trigger a native gen closes over ``api`` and forwards it to _gen_native.
+        api = self._api
+
         # SET is the shared settings-bar inputs passed to every generation handler.
         # loras + multipliers ride at the end so they reach base/pose/reimagine gen.
         SET = [s["model"], s["sampler"], s["scheduler"], s["steps"], s["cfg_scale"],
@@ -545,7 +557,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 progress((i, n), desc=f"Base {i + 1}/{n}")
                 files += self._gen_image(state, model, pos, neg, width, height,
                                          steps, cfg, sd, sampler, scheduler, clip_skip,
-                                         loras=loras, lora_mult=lora_mult)
+                                         loras=loras, lora_mult=lora_mult, api=api)
             if not files:
                 raise gr.Error("Generation produced no images.")
             return files, files[0]
@@ -588,7 +600,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                     files += self._gen_native(
                         ident, pos, neg, width, height, steps, cfg, sd,
                         mode="img2img", denoise=float(denoise), guide_path=ref_img,
-                        loras=loras, mult_str=lora_mult)
+                        loras=loras, mult_str=lora_mult, api=api)
             else:  # sd
                 sd_loras = self._sd_lora_list(loras, lora_mult)
                 if not self.acquire_gpu(state):
@@ -929,7 +941,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 outs = self._gen_native(ident, prompt, neg or "", int(w), int(h),
                                         int(steps), float(cfg), -1, mode="img2img",
                                         denoise=0.4, guide_path=src,
-                                        loras=loras, mult_str=lora_mult)
+                                        loras=loras, mult_str=lora_mult, api=api)
                 return outs or gr.update()
             gen_sd.release_inpaint()
             if not self.acquire_gpu(state):
@@ -1021,7 +1033,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 gen_sd.set_current_index(i)
                 imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps, cfg,
                                        sd, sampler, scheduler, clip_skip,
-                                       loras=loras, lora_mult=lora_mult)
+                                       loras=loras, lora_mult=lora_mult, api=api)
                 # Interrupted mid-gen (master or this pose) → discard the partial.
                 img = None if gen_sd.should_skip(i) else (imgs[0] if imgs else None)
                 raw.append((img, spec))
@@ -1140,16 +1152,17 @@ class ReplicantCharLab(WAN2GPPlugin):
                         imgs = self._gen_native(ident, p_pos, p_neg, pw, ph, steps,
                                                 cfg, sd, mode="img2img",
                                                 denoise=i2i_den, guide_path=img,
-                                                loras=loras, mult_str=lora_mult)
+                                                loras=loras, mult_str=lora_mult, api=api)
                     else:
                         imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph,
                                                steps, cfg, sd, sampler, scheduler,
-                                               clip_skip, loras=loras, lora_mult=lora_mult)
+                                               clip_skip, loras=loras, lora_mult=lora_mult,
+                                               api=api)
                     new = imgs[0] if imgs else img
                 elif choice == "Regenerate (txt2img)":
                     imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps,
                                            cfg, sd, sampler, scheduler, clip_skip,
-                                           loras=loras, lora_mult=lora_mult)
+                                           loras=loras, lora_mult=lora_mult, api=api)
                     new = imgs[0] if imgs else img
                 else:  # SD img2img — Cohesion = gentle low-CFG; Re-Roll = heavier
                     if choice == "Cohesion (img2img)":
