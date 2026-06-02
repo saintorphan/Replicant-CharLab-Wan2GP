@@ -282,8 +282,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                     body_den, apply_face, face_src, out, progress, start_idx=0, adet=None):
         """Order per pose: body double → body ADetailer (person) → face swap → face
         ADetailer (face). Body-before-face so the swapped face survives; ADetailer for
-        each region uses its own model. ``adet`` (optional) = the Replicate tab's
-        settings dict: face/face_pos/face_neg/body/body_pos/body_neg. Returns (gallery, specs)."""
+        each region uses its own model. ``adet`` = the Replicate tab's ADetailer dict.
+        Returns (gallery, specs)."""
         from pathlib import Path
         out = Path(out); out.mkdir(parents=True, exist_ok=True)
         ad = adet or {}
@@ -897,7 +897,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                          *rest, progress=gr.Progress()):
             cur = list(rest[:_N])
             choices = list(rest[_N:2 * _N])
-            pstate = rest[2 * _N] if len(rest) > 2 * _N else {}
+            colors = list(rest[2 * _N:3 * _N])
+            pstate = rest[3 * _N] if len(rest) > 3 * _N else {}
             if not any(cur):
                 raise gr.Error("Generate poses first.")
             backend, ident = discovery.parse_model_value(model)
@@ -965,13 +966,17 @@ class ReplicantCharLab(WAN2GPPlugin):
                     body_denoise, apply_face, face_src, paths.cache_dir() / "poses",
                     progress, start_idx=1000, adet=adet)
                 for (oi, _, _), sw in zip(to_swap, swapped):
+                    # Color match (only for ticked Cohesion/Re-Roll poses) → base tones.
+                    if sw and oi < len(colors) and colors[oi] and sel_base:
+                        sw = gen_sd.color_match(sw, sel_base, body_only=True)
                     final[oi] = sw
             saved = self._persist_poses(final, specs)
             return saved + [{"poses": saved, "specs": specs}]
 
         pose["rerun"].click(
             _rerun_poses,
-            inputs=pose_in + pose["pose_imgs"] + pose["pose_choices"] + [ui["poses_state"]],
+            inputs=pose_in + pose["pose_imgs"] + pose["pose_choices"] + pose["pose_color"]
+            + [ui["poses_state"]],
             outputs=pose_out)
 
         # "Use Reference" is only offered when a face/body reference exists on Human Clone.

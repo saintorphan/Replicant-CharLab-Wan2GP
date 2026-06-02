@@ -65,6 +65,59 @@ def _free_torch():
         pass
 
 
+def _body_mask_bool(image_path, shape):
+    """Boolean person mask for color matching (via the gated person-seg model), resized
+    to ``shape`` (H, W). None if the model isn't present → caller uses the whole image."""
+    try:
+        import numpy as np
+        from PIL import Image
+        regions = _detect_person_regions(image_path)
+        if not regions:
+            return None
+        m = regions[0][1].resize((shape[1], shape[0]))
+        return np.asarray(m, float) > 127
+    except Exception:
+        return None
+
+
+def color_match(image_path, source_path, body_only=True, out_dir=None) -> str:
+    """Match an image's color/tone to ``source`` (Reinhard LAB mean/std transfer) so
+    poses share consistent skin tones. When ``body_only`` and the person-seg model is
+    present, stats are computed AND applied only within the body mask — backgrounds are
+    left untouched (safe on already-consistent poses). No model = whole-image. Returns
+    the saved path."""
+    import time
+    import numpy as np
+    from PIL import Image
+    from skimage import color as skcolor
+    try:
+        img = np.asarray(Image.open(image_path).convert("RGB"), float) / 255.0
+        src = np.asarray(Image.open(source_path).convert("RGB"), float) / 255.0
+        lab_i, lab_s = skcolor.rgb2lab(img), skcolor.rgb2lab(src)
+        mi = _body_mask_bool(image_path, lab_i.shape[:2]) if body_only else None
+        ms = _body_mask_bool(source_path, lab_s.shape[:2]) if body_only else None
+        if mi is None or not mi.any():
+            mi = np.ones(lab_i.shape[:2], bool)
+        if ms is None or not ms.any():
+            ms = np.ones(lab_s.shape[:2], bool)
+        out_lab = lab_i.copy()
+        for c in range(3):  # match the masked region's mean/std to the source's
+            tgt = lab_i[..., c][mi]
+            ref = lab_s[..., c][ms]
+            si = tgt.std()
+            if si > 1e-6 and ref.size:
+                out_lab[..., c][mi] = (tgt - tgt.mean()) * (ref.std() / si) + ref.mean()
+        out_arr = (np.clip(skcolor.lab2rgb(out_lab), 0, 1) * 255).astype("uint8")
+        out = Path(out_dir) if out_dir else (paths.cache_dir() / "poses")
+        out.mkdir(parents=True, exist_ok=True)
+        f = out / f"cmatch_{int(time.time() * 1000)}.png"
+        Image.fromarray(out_arr).save(f)
+        return str(f)
+    except Exception:
+        logger.warning("color match failed", exc_info=True)
+        return image_path
+
+
 def sharpen(image_path, radius=2.0, percent=120, threshold=3, out_dir=None) -> str:
     """Crisp the WHOLE image without changing its resolution (PIL unsharp mask).
     No model, no GPU, instant. Boosts edge contrast — keep params modest so it

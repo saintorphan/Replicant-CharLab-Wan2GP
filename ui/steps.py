@@ -325,10 +325,11 @@ def build_poses(visible: bool, init=None):
         gr.Markdown("<sub>Per pose: **Approve** keeps it · **Sharpen (no upscale)** = crisp "
                     "the whole image (no model) · **Cohesion (img2img)** = gentle low-CFG "
                     "cleanup · **Re-Roll (img2img)** = heavier re-roll · **Regenerate "
-                    "(txt2img)** = fresh image.</sub>")
-        # Fixed grid: one (image + dropdown) slot per pose.
+                    "(txt2img)** = fresh image. **Color match** (only on Cohesion/Re-Roll) "
+                    "retones the body to the base for skin-tone consistency.</sub>")
+        # Fixed grid: one (image + dropdown + color-match) slot per pose.
         saved = (init or {}).get("poses.pose_gallery") or []
-        c["pose_imgs"], c["pose_choices"] = [], []
+        c["pose_imgs"], c["pose_choices"], c["pose_color"] = [], [], []
         for r in range(0, n, 4):
             with gr.Row():
                 for idx in range(r, min(r + 4, n)):
@@ -342,8 +343,11 @@ def build_poses(visible: bool, init=None):
                                           "Regenerate (txt2img)"],
                                          value="Re-Roll (img2img)", container=False,
                                          show_label=False)
+                        cm = gr.Checkbox(value=False, label="Color match",
+                                         container=False)
                         c["pose_imgs"].append(img)
                         c["pose_choices"].append(dd)
+                        c["pose_color"].append(cm)
     return g, c
 
 
