@@ -301,12 +301,18 @@ def build_poses(visible: bool, init=None):
             c["body_mode"] = gr.Radio(
                 ["None", "Use Base"] + (["Use Reference"] if body_ref else []),
                 value="None", label="Body double")
-        c["generate"] = gr.Button("Generate poses", variant="primary")
-        c["pose_gallery"] = gr.Gallery(label="Poses (approve to keep)", columns=4,
+        with gr.Row():
+            c["generate"] = gr.Button("Generate poses", variant="primary")
+            c["rerun"] = gr.Button("↻ Re-run poses (apply selections)", variant="primary")
+        gr.Markdown("<sub>Click a pose to cycle its corner badge: **grey** = re-roll as "
+                    "img2img from itself · **green ✓** = approve (keep) · **red ✗** = "
+                    "fully regenerate. Then **Re-run poses**.</sub>")
+        c["pose_gallery"] = gr.Gallery(label="Poses", columns=4,
                                        height=760, object_fit="contain",
                                        show_fullscreen_button=True,
                                        elem_id="replicant-pose-out",
                                        value=_init_gallery(init, "poses.pose_gallery"))
+        c["pose_select"] = gr.State([])  # per-pose: "none" | "approve" | "regen"
     return g, c
 
 

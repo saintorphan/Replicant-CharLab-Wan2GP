@@ -28,6 +28,36 @@ from .ui.styles import CSS
 PLUGIN_ID = "ReplicantCharLab"
 PLUGIN_NAME = "Replicant Character Lab"
 
+# Draw a colored status badge in each pose thumbnail's corner from the state array
+# (none=grey / approve=green ✓ / regen=red ✗). gr.Gallery has no per-item overlay API,
+# so we paint it in the DOM; pointer-events:none keeps clicks reaching the thumbnail.
+_POSE_BADGE_JS = """
+(states) => {
+  setTimeout(() => {
+    const root = document.querySelector('#replicant-pose-out');
+    if (!root) return;
+    root.querySelectorAll('.thumbnail-item').forEach((el, i) => {
+      el.style.position = 'relative';
+      let b = el.querySelector('.rep-badge');
+      if (!b) {
+        b = document.createElement('div');
+        b.className = 'rep-badge';
+        b.style.cssText = 'position:absolute;bottom:6px;right:6px;width:24px;height:24px;' +
+          'border-radius:50%;display:flex;align-items:center;justify-content:center;' +
+          'font-weight:700;font-size:15px;color:#fff;z-index:6;pointer-events:none;' +
+          'box-shadow:0 0 3px rgba(0,0,0,.6);';
+        el.appendChild(b);
+      }
+      const s = (states && states[i]) || 'none';
+      if (s === 'approve') { b.style.background = '#22c55e'; b.textContent = '\\u2713'; }
+      else if (s === 'regen') { b.style.background = '#ef4444'; b.textContent = '\\u2717'; }
+      else { b.style.background = '#9ca3af'; b.textContent = ''; }
+    });
+  }, 60);
+  return states;
+}
+"""
+
 
 class ReplicantCharLab(WAN2GPPlugin):
     def __init__(self):
@@ -179,6 +209,53 @@ class ReplicantCharLab(WAN2GPPlugin):
             finally:
                 self.release_gpu(state)
         raise gr.Error("Select a model from the dropdown first.")
+
+    def _pose_swaps(self, state, ident, items, pos, neg, do_body, body_src, body_ip,
+                    body_den, apply_face, face_src, out, progress, start_idx=0):
+        """Apply body double (head excluded) then face swap to each (img, spec).
+        Body runs first so the swapped face survives. Returns (gallery, specs)."""
+        from pathlib import Path
+        out = Path(out); out.mkdir(parents=True, exist_ok=True)
+        if do_body:
+            gen_sd.release_sd(); self._release_faceswap()
+            bodied = []
+            for i, (img, spec) in enumerate(items):
+                final = img
+                progress((i, len(items)), desc=f"Body double {i + 1}/{len(items)}")
+                try:
+                    if self.acquire_gpu(state):
+                        try:
+                            r = gen_sd.body_swap(ident, img, body_src, pos, neg,
+                                                 ip_scale=float(body_ip),
+                                                 denoise=float(body_den),
+                                                 adetailer=False, progress=progress)
+                            final = r or img
+                        finally:
+                            self.release_gpu(state)
+                except Exception:
+                    traceback.print_exc()
+                bodied.append((final, spec))
+            items = bodied
+        gen_sd.release_sd()
+        gallery, specs = [], []
+        fp = self._face_pipe() if apply_face else None
+        for i, (img, spec) in enumerate(items):
+            final = img
+            if apply_face:
+                progress((i, len(items)), desc=f"Applying face {i + 1}/{len(items)}")
+                try:
+                    if self.acquire_gpu(state):
+                        try:
+                            swapped = fp.swap(source_path=face_src, target_path=img)
+                            fp_path = out / f"pose_{start_idx + i + 1:03d}.png"
+                            swapped.save(fp_path); final = str(fp_path)
+                        finally:
+                            self.release_gpu(state)
+                except Exception:
+                    traceback.print_exc()
+            gallery.append(final); specs.append(spec)
+        self._release_faceswap()  # leave the GPU clean for Save / Train
+        return gallery, specs
 
     def _wire_generation(self, ui):
         c, s = ui["components"], ui["settings"]
@@ -649,70 +726,110 @@ class ReplicantCharLab(WAN2GPPlugin):
                              "orientation": ps.orientation}))
 
             out = paths.cache_dir() / "poses"
-            out.mkdir(parents=True, exist_ok=True)
             imgs = [(img, spec) for img, spec in raw if img]
-
-            # Pass 2a — BODY swap first (regenerates the body; head excluded). Must run
-            # before the face swap or it would overwrite the swapped face. SD-family
-            # inpaint pipe resident only; face models released.
-            if do_body:
-                gen_sd.release_sd()
-                self._release_faceswap()
-                bodied = []
-                for i, (img, spec) in enumerate(imgs):
-                    final = img
-                    progress((i, len(imgs)), desc=f"Body swap {i + 1}/{len(imgs)}")
-                    try:
-                        if self.acquire_gpu(state):
-                            try:
-                                r = gen_sd.body_swap(
-                                    ident, img, body_src, pos, neg,
-                                    ip_scale=float(body_ip_scale),
-                                    denoise=float(body_denoise), adetailer=False,
-                                    progress=progress)
-                                final = r or img
-                            finally:
-                                self.release_gpu(state)
-                    except Exception:
-                        traceback.print_exc()
-                    bodied.append((final, spec))
-                imgs = bodied
-
-            # Pass 2b — FACE swap last (so it isn't overwritten by the body pass).
-            gen_sd.release_sd()
-            gallery, specs = [], []
-            fp = self._face_pipe() if apply_face else None
-            for i, (img, spec) in enumerate(imgs):
-                final = img
-                if apply_face:
-                    progress((i, len(imgs)), desc=f"Applying face {i + 1}/{len(imgs)}")
-                    try:
-                        if self.acquire_gpu(state):
-                            try:
-                                swapped = fp.swap(source_path=face_src, target_path=img)
-                                fp_path = out / f"pose_{i + 1:03d}.png"
-                                swapped.save(fp_path)
-                                final = str(fp_path)
-                            finally:
-                                self.release_gpu(state)
-                    except Exception:
-                        traceback.print_exc()
-                gallery.append(final)
-                specs.append(spec)
-
-            self._release_faceswap()  # leave the GPU clean for Save / Train
+            gallery, specs = self._pose_swaps(
+                state, ident, imgs, pos, neg, do_body, body_src, body_ip_scale,
+                body_denoise, apply_face, face_src, out, progress)
             if not gallery:
                 raise gr.Error("No poses were generated.")
-            return gallery, {"poses": gallery, "specs": specs}
+            return gallery, {"poses": gallery, "specs": specs}, ["none"] * len(gallery)
 
-        pose["generate"].click(
-            _gen_poses,
-            inputs=[self.state] + SET + [prm["positive_prompt"], prm["negative_prompt"],
-                                         base["selected_base"], pose["face_mode"],
-                                         pose["body_mode"], swap["face_source"],
-                                         swap["body_source"], swap["body_ip_scale"],
-                                         swap["body_denoise"]],
-            outputs=[pose["pose_gallery"], ui["poses_state"]])
+        pose_in = [self.state] + SET + [prm["positive_prompt"], prm["negative_prompt"],
+                                        base["selected_base"], pose["face_mode"],
+                                        pose["body_mode"], swap["face_source"],
+                                        swap["body_source"], swap["body_ip_scale"],
+                                        swap["body_denoise"]]
+        pose_out = [pose["pose_gallery"], ui["poses_state"], pose["pose_select"]]
+        pose["generate"].click(_gen_poses, inputs=pose_in, outputs=pose_out)
+
+        # Click a pose to cycle its badge: none -> approve -> regen -> none.
+        def _cycle(states, evt: gr.SelectData):
+            states = list(states or [])
+            i = evt.index
+            while len(states) <= i:
+                states.append("none")
+            states[i] = {"none": "approve", "approve": "regen",
+                         "regen": "none"}.get(states[i], "approve")
+            return states
+        pose["pose_gallery"].select(_cycle, inputs=[pose["pose_select"]],
+                                    outputs=[pose["pose_select"]])
+        # Redraw the corner badges whenever the selection state changes.
+        pose["pose_select"].change(lambda s: None, inputs=[pose["pose_select"]],
+                                   outputs=None, js=_POSE_BADGE_JS)
+
+        def _rerun_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
+                         width, height, pos, neg, sel_base, face_mode, body_mode,
+                         face_ref, body_ref, body_ip_scale, body_denoise,
+                         gallery, pstate, sel, progress=gr.Progress()):
+            cur = [g[0] if isinstance(g, (list, tuple)) else g for g in (gallery or [])]
+            if not cur:
+                raise gr.Error("Generate poses first.")
+            backend, ident = discovery.parse_model_value(model)
+            face_src = sel_base if face_mode == "Use Base" else (
+                face_ref if face_mode == "Use Reference" else None)
+            body_src = sel_base if body_mode == "Use Base" else (
+                body_ref if body_mode == "Use Reference" else None)
+            apply_face = bool(face_src)
+            do_body = bool(body_src) and backend == "sd"
+            if do_body:
+                self._require(models.BODY_SWAP_KEYS, "Body double for poses")
+            if apply_face:
+                self._require(["inswapper_128", "buffalo_l"], "Pose face swap")
+            specs = (pstate or {}).get("specs", [])
+            sel = list(sel or [])
+            P = poses.POSES
+            final = list(cur)
+            to_swap = []  # (orig_index, new_base_img, spec)
+            for i, img in enumerate(cur):
+                st = sel[i] if i < len(sel) else "none"
+                if st == "approve":
+                    continue  # keep as-is (already swapped)
+                spec = specs[i] if i < len(specs) else \
+                    {"distance": "full", "angle": "front", "orientation": "portrait"}
+                desc = next((p.description for p in P if p.distance == spec.get("distance")
+                             and p.angle == spec.get("angle")), "")
+                p_pos = f"{pos}, {desc}" if desc else pos
+                p_neg = poses.pose_negative_for(spec.get("distance", "full"), neg)
+                pw, ph = (max(width, height), min(width, height)) \
+                    if spec.get("orientation") == "landscape" \
+                    else (min(width, height), max(width, height))
+                sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
+                if st == "regen":  # fresh txt2img
+                    imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps,
+                                           cfg, sd, sampler, scheduler, clip_skip)
+                    new = imgs[0] if imgs else img
+                elif backend == "sd":  # "none" → img2img from itself (SD only)
+                    gen_sd.release_sd(); self._release_faceswap()
+                    if self.acquire_gpu(state):
+                        try:
+                            outs = gen_sd.generate_img2img(
+                                ident, img, p_pos, p_neg, pw, ph, int(steps),
+                                float(cfg), sd, denoise=0.5, clip_skip=int(clip_skip))
+                        finally:
+                            self.release_gpu(state)
+                        new = outs[0] if outs else img
+                    else:
+                        new = img
+                else:  # native: no img2img path → regen
+                    imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps,
+                                           cfg, sd, sampler, scheduler, clip_skip)
+                    new = imgs[0] if imgs else img
+                to_swap.append((i, new, spec))
+            if to_swap:
+                items = [(im, sp) for (_, im, sp) in to_swap]
+                swapped, _ = self._pose_swaps(
+                    state, ident, items, pos, neg, do_body, body_src, body_ip_scale,
+                    body_denoise, apply_face, face_src, paths.cache_dir() / "poses",
+                    progress, start_idx=1000)
+                for (oi, _, _), sw in zip(to_swap, swapped):
+                    final[oi] = sw
+            return final, {"poses": final, "specs": specs[:len(final)]}, \
+                ["none"] * len(final)
+
+        pose["rerun"].click(
+            _rerun_poses,
+            inputs=pose_in + [pose["pose_gallery"], ui["poses_state"], pose["pose_select"]],
+            outputs=pose_out)
 
         # "Use Reference" is only offered when a face/body reference exists on Human Clone.
         def _ref_opts(src, base):
