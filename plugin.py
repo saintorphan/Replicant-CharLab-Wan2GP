@@ -798,13 +798,13 @@ class ReplicantCharLab(WAN2GPPlugin):
                     imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps,
                                            cfg, sd, sampler, scheduler, clip_skip)
                     new = imgs[0] if imgs else img
-                elif backend == "sd":  # "none" → img2img from itself (SD only)
+                elif backend == "sd":  # "none" → img2img from itself (fixed CFG 30 / 15 steps)
                     gen_sd.release_sd(); self._release_faceswap()
                     if self.acquire_gpu(state):
                         try:
                             outs = gen_sd.generate_img2img(
-                                ident, img, p_pos, p_neg, pw, ph, int(steps),
-                                float(cfg), sd, denoise=0.5, clip_skip=int(clip_skip))
+                                ident, img, p_pos, p_neg, pw, ph, 15,
+                                30.0, sd, denoise=0.5, clip_skip=int(clip_skip))
                         finally:
                             self.release_gpu(state)
                         new = outs[0] if outs else img
