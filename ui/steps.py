@@ -298,7 +298,8 @@ def build_poses(visible: bool, init=None):
         c["generate"] = gr.Button("Generate poses", variant="primary")
         c["pose_gallery"] = gr.Gallery(label="Poses (approve to keep)", columns=4,
                                        height=760, object_fit="contain",
-                                       show_fullscreen_button=True)
+                                       show_fullscreen_button=True,
+                                       value=_init_gallery(init, "poses.pose_gallery"))
     return g, c
 
 

@@ -145,7 +145,9 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
         next_btn = gr.Button("Next ▶", variant="primary")
 
     step = gr.State(0)
-    poses_state = gr.State({"poses": [], "specs": []})  # filled by pose gen (step 5)
+    _ip = init or {}
+    poses_state = gr.State({"poses": list(_ip.get("poses.pose_gallery", [])),
+                            "specs": list(_ip.get("poses.specs", []))})
 
     sw, sh = settings["width"], settings["height"]
     nav_outputs = groups + rail + [back_btn, next_btn, step, sw, sh]
@@ -268,15 +270,15 @@ def _stable_image(path, key):
         return path
 
 
-def _stable_gallery(vals):
+def _stable_gallery(vals, sub="candidates", prefix="cand"):
     import shutil
-    d = _persist_dir() / "candidates"
+    d = _persist_dir() / sub
     shutil.rmtree(d, ignore_errors=True); d.mkdir(parents=True, exist_ok=True)
     out = []
     for i, item in enumerate(vals or []):
         p = _extract_path(item)
         if p and os.path.isfile(p):
-            dst = d / f"cand_{i:02d}{os.path.splitext(p)[1] or '.png'}"
+            dst = d / f"{prefix}_{i:02d}{os.path.splitext(p)[1] or '.png'}"
             try:
                 shutil.copy2(p, dst); out.append(str(dst))
             except Exception:
@@ -327,12 +329,23 @@ def _wire_persistence(comps, settings, poses_state, init):
             wizard_state.save(d)
         gal.change(_save_gal, inputs=[gal], outputs=[])
 
+    # --- pose gallery (+ specs from poses_state) ---
+    pgal = comps.get("poses", {}).get("pose_gallery")
+    if pgal is not None:
+        def _save_poses(vals, pstate):
+            d = wizard_state.load()
+            d["poses.pose_gallery"] = _stable_gallery(vals, sub="poses", prefix="pose")
+            d["poses.specs"] = (pstate or {}).get("specs", [])
+            wizard_state.save(d)
+        pgal.change(_save_poses, inputs=[pgal, poses_state], outputs=[])
+
     # --- Clear Wizard (form reset) + Clear Cache (delete files), both confirmed ---
     su = comps["setup"]
     clear_btn = su.get("clear_btn")
     if clear_btn is not None:
         import shutil
-        clear_outputs = fields + img_comps + ([gal] if gal is not None else []) + [poses_state]
+        clear_outputs = (fields + img_comps + ([gal] if gal is not None else [])
+                         + ([pgal] if pgal is not None else []) + [poses_state])
         ccr, ccb = su["clear_confirm_row"], su["clear_confirm_btns"]
         kar, kab = su["cache_confirm_row"], su["cache_confirm_btns"]
 
@@ -340,6 +353,7 @@ def _wire_persistence(comps, settings, poses_state, init):
             wizard_state.clear()  # reset the form state only
             return ([defaults[k] for k in keys]
                     + [None] * len(img_comps) + ([None] if gal is not None else [])
+                    + ([None] if pgal is not None else [])
                     + [{"poses": [], "specs": []}]
                     + [gr.update(visible=False), gr.update(visible=False)])
 
