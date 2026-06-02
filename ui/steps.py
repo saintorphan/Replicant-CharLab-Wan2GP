@@ -296,7 +296,9 @@ def build_poses(visible: bool, init=None):
             c["apply_face_to_poses"] = gr.Checkbox(value=True, label="Apply face swap to poses")
             c["apply_body_to_poses"] = gr.Checkbox(value=True, label="Apply body swap to poses")
         c["generate"] = gr.Button("Generate poses", variant="primary")
-        c["pose_gallery"] = gr.Gallery(label="Poses (approve to keep)", columns=4, height=340, show_fullscreen_button=True)
+        c["pose_gallery"] = gr.Gallery(label="Poses (approve to keep)", columns=4,
+                                       height=760, object_fit="contain",
+                                       show_fullscreen_button=True)
     return g, c
 
 
