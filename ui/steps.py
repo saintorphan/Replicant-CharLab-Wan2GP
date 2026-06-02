@@ -309,11 +309,13 @@ def build_poses(visible: bool, init=None):
                     "fully regenerate. Then **Re-run poses**.</sub>")
         c["pose_gallery"] = gr.Gallery(label="Poses", columns=4,
                                        height=760, object_fit="contain",
-                                       allow_preview=False,  # click cycles the badge
                                        show_fullscreen_button=True,
                                        elem_id="replicant-pose-out",
                                        value=_init_gallery(init, "poses.pose_gallery"))
         c["pose_select"] = gr.State([])  # per-pose: "none" | "approve" | "regen"
+        # Hidden relay: the badge's JS click writes "<index>:<ts>" here; Python cycles.
+        c["pose_click"] = gr.Textbox(value="", elem_id="replicant-pose-click",
+                                     elem_classes="replicant-hidden")
     return g, c
 
 

@@ -36,24 +36,33 @@ _POSE_BADGE_JS = """
   setTimeout(() => {
     const root = document.querySelector('#replicant-pose-out');
     if (!root) return;
+    const box = document.querySelector('#replicant-pose-click textarea') ||
+                document.querySelector('#replicant-pose-click input');
     root.querySelectorAll('.thumbnail-item').forEach((el, i) => {
       el.style.position = 'relative';
       let b = el.querySelector('.rep-badge');
       if (!b) {
         b = document.createElement('div');
         b.className = 'rep-badge';
-        b.style.cssText = 'position:absolute;bottom:6px;right:6px;width:24px;height:24px;' +
+        b.style.cssText = 'position:absolute;bottom:8px;right:8px;width:30px;height:30px;' +
           'border-radius:50%;display:flex;align-items:center;justify-content:center;' +
-          'font-weight:700;font-size:15px;color:#fff;z-index:6;pointer-events:none;' +
-          'box-shadow:0 0 3px rgba(0,0,0,.6);';
+          'font-weight:700;font-size:18px;color:#fff;z-index:20;cursor:pointer;' +
+          'border:2px solid #fff;box-shadow:0 0 5px rgba(0,0,0,.8);';
         el.appendChild(b);
+        b.addEventListener('click', (e) => {
+          e.stopPropagation(); e.preventDefault();
+          if (box) {
+            box.value = i + ':' + Date.now();
+            box.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        }, true);
       }
       const s = (states && states[i]) || 'none';
       if (s === 'approve') { b.style.background = '#22c55e'; b.textContent = '\\u2713'; }
       else if (s === 'regen') { b.style.background = '#ef4444'; b.textContent = '\\u2717'; }
-      else { b.style.background = '#9ca3af'; b.textContent = ''; }
+      else { b.style.background = 'rgba(120,120,120,.85)'; b.textContent = '\\u2022'; }
     });
-  }, 60);
+  }, 80);
   return states;
 }
 """
@@ -742,17 +751,20 @@ class ReplicantCharLab(WAN2GPPlugin):
         pose_out = [pose["pose_gallery"], ui["poses_state"], pose["pose_select"]]
         pose["generate"].click(_gen_poses, inputs=pose_in, outputs=pose_out)
 
-        # Click a pose to cycle its badge: none -> approve -> regen -> none.
-        def _cycle(states, evt: gr.SelectData):
+        # Clicking a pose's corner badge cycles its state: none -> approve -> regen.
+        # The badge JS writes "<index>:<ts>" into the hidden relay; we cycle here.
+        def _cycle(states, val):
+            if not val or ":" not in val:
+                return states
+            i = int(val.split(":")[0])
             states = list(states or [])
-            i = evt.index
             while len(states) <= i:
                 states.append("none")
             states[i] = {"none": "approve", "approve": "regen",
                          "regen": "none"}.get(states[i], "approve")
             return states
-        pose["pose_gallery"].select(_cycle, inputs=[pose["pose_select"]],
-                                    outputs=[pose["pose_select"]])
+        pose["pose_click"].change(_cycle, inputs=[pose["pose_select"], pose["pose_click"]],
+                                  outputs=[pose["pose_select"]])
         # Redraw the corner badges whenever the selection state changes.
         pose["pose_select"].change(lambda s: None, inputs=[pose["pose_select"]],
                                    outputs=None, js=_POSE_BADGE_JS)
