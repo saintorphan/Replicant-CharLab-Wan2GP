@@ -72,10 +72,12 @@ class ModelSpec:
     def is_present(self) -> bool:
         if self.repo:
             ld = self.local_dir()
-            if ld:
-                d = Path(ld)
-                return d.is_dir() and any(d.iterdir())
-            try:  # cache check, no network
+            if ld and Path(ld).is_dir() and any(Path(ld).iterdir()):
+                return True
+            # Fall back to the HF cache: the loader uses the repo id when the local
+            # dir is absent (e.g. BiRefNet's segment_foreground), so a model already
+            # in the HF cache must NOT be reported missing. (Cache check, no network.)
+            try:
                 from huggingface_hub import snapshot_download
                 snapshot_download(self.repo, local_files_only=True)
                 return True
