@@ -95,6 +95,11 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
                 header_confirm_cache = gr.Button("Yes, delete cache", variant="stop")
                 header_cancel_cache = gr.Button("Cancel")
 
+    # Hidden relay: the shared right-click menu's "Replicant (Reference)" item writes
+    # the picked image's src here (src|ts); Python loads it as the Setup reference.
+    comps_ctx_relay = gr.Textbox(value="", elem_id="replicant-ctx-relay",
+                                 elem_classes="replicant-hidden")
+
     # Prerequisites (directories + models) ----------------------------------
     prereqs = build_prereqs()
 
@@ -117,6 +122,7 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
         groups.append(g)
         comps[STEPS[i][0]] = c
     # Load / Save / Clear are header session actions; expose them where the wiring looks.
+    comps["setup"]["ctx_relay"] = comps_ctx_relay
     comps["setup"]["load_existing"] = header_load_existing
     comps["setup"]["load_btn"] = header_load_btn
     comps["setup"]["load_popup"] = load_popup

@@ -28,6 +28,55 @@ from .ui.styles import CSS
 PLUGIN_ID = "ReplicantCharLab"
 PLUGIN_NAME = "Replicant Character Lab"
 
+# Shared, idempotent right-click context menu for images/videos ANYWHERE in the app.
+# First of the user's plugins to load creates window.SaintorphanMenu (the 'saintorphan'
+# header + separator + the contextmenu listener); every plugin then registers its own
+# items via window.SaintorphanMenu.register('image'|'video', label, handler). Replicant
+# registers 'Replicant (Reference)' which relays the picked image's src to Python.
+# Injected via <img onerror> (gr.HTML doesn't run <script>); all-single-quoted JS.
+_CTX_MENU_JS = (
+    "<img src=x style='display:none' onerror=\"(function(){"
+    "if(!window.SaintorphanMenu){var M=window.SaintorphanMenu={image:[],video:[]};"
+    "M.register=function(kind,label,handler){(M[kind]||(M[kind]=[])).push("
+    "{label:label,handler:handler});};"
+    "function close(){var m=document.getElementById('saintorphan-ctx');if(m)m.remove();}"
+    "function build(x,y,kind,media){close();var items=M[kind]||[];if(!items.length)return;"
+    "var menu=document.createElement('div');menu.id='saintorphan-ctx';"
+    "menu.style.cssText='position:fixed;z-index:99999;background:#1f2430;border:1px solid "
+    "#3a3f4b;border-radius:8px;padding:4px 0;box-shadow:0 6px 24px rgba(0,0,0,.5);"
+    "min-width:210px;font-family:sans-serif;font-size:13px;color:#e5e7eb;';"
+    "var h=document.createElement('div');h.textContent='saintorphan';"
+    "h.style.cssText='padding:4px 14px;font-weight:700;color:#e83e8c;cursor:default;"
+    "user-select:none;';menu.appendChild(h);"
+    "var hr=document.createElement('div');hr.style.cssText='height:1px;background:#3a3f4b;"
+    "margin:4px 0;';menu.appendChild(hr);"
+    "items.forEach(function(it){var el=document.createElement('div');el.textContent=it.label;"
+    "el.style.cssText='padding:6px 14px;cursor:pointer;white-space:nowrap;';"
+    "el.onmouseenter=function(){el.style.background='#2d3340';};"
+    "el.onmouseleave=function(){el.style.background='';};"
+    "el.addEventListener('click',function(ev){ev.stopPropagation();close();"
+    "try{it.handler(media);}catch(err){console.error(err);}});menu.appendChild(el);});"
+    "document.body.appendChild(menu);var r=menu.getBoundingClientRect();"
+    "if(x+r.width>window.innerWidth)x=window.innerWidth-r.width-6;"
+    "if(y+r.height>window.innerHeight)y=window.innerHeight-r.height-6;"
+    "menu.style.left=x+'px';menu.style.top=y+'px';}"
+    "document.addEventListener('contextmenu',function(e){"
+    "var media=e.target.closest('img, video');if(!media)return;"
+    "var kind=(media.tagName.toLowerCase()==='video')?'video':'image';"
+    "if(!(M[kind]&&M[kind].length))return;e.preventDefault();build(e.clientX,e.clientY,kind,media);},true);"
+    "document.addEventListener('click',close);document.addEventListener('scroll',close,true);}"
+    "var M=window.SaintorphanMenu;if(!M._replicant){M._replicant=true;"
+    "M.register('image','Replicant (Reference)',function(media){"
+    "var src=media.currentSrc||media.src||'';"
+    "var send=function(v){var b=document.querySelector('#replicant-ctx-relay textarea')"
+    "||document.querySelector('#replicant-ctx-relay input');"
+    "if(b){b.value=v+'|'+Date.now();b.dispatchEvent(new Event('input',{bubbles:true}));}};"
+    "if(src.indexOf('/file=')>=0||src.indexOf('data:')===0){send(src);}"
+    "else{fetch(src).then(function(r){return r.blob();}).then(function(bl){"
+    "var fr=new FileReader();fr.onload=function(){send(fr.result);};fr.readAsDataURL(bl);})"
+    ".catch(function(){send(src);});}});}"
+    "})()\">")
+
 # Draw a colored status badge in each pose thumbnail's corner from the state array
 # (none=grey / approve=green ✓ / regen=red ✗). gr.Gallery has no per-item overlay API,
 # so we paint it in the DOM; pointer-events:none keeps clicks reaching the thumbnail.
@@ -131,11 +180,14 @@ class ReplicantCharLab(WAN2GPPlugin):
             "if(b.textContent.trim()===NAME)b.classList.add('replicant-tabbtn');});}"
             "[200,800,2000,4000].forEach(function(t){setTimeout(mark,t);});})()\">",
             elem_classes="replicant-hidden")
+        # Shared right-click context menu (app-wide) + Replicant's item.
+        gr.HTML(_CTX_MENU_JS, elem_classes="replicant-hidden")
         with gr.Column(elem_id="replicant-root"):
             ui = wizard.build_wizard(model_choices=model_choices, lora_choices=lora_choices,
                                      init=init)
         self._wire_enhancer(ui)
         self._wire_generation(ui)
+        self._wire_context_menu(ui)
         self.on_tab_outputs = [self.main_tabs] if hasattr(self, "main_tabs") else None
         self._ui = ui
         return ui
@@ -890,6 +942,55 @@ class ReplicantCharLab(WAN2GPPlugin):
                                    outputs=[pose["face_mode"]])
         swap["body_source"].change(_ref_opts, inputs=[swap["body_source"], base["selected_base"]],
                                    outputs=[pose["body_mode"]])
+
+    @staticmethod
+    def _resolve_ctx_src(src):
+        """Resolve a right-clicked media src to a local file path: a /file= URL → its
+        path; a data: URL → decoded to the persist dir. Returns a path or None."""
+        import base64
+        import os
+        import time
+        import urllib.parse
+        if not src:
+            return None
+        if src.startswith("data:"):
+            try:
+                head, b64 = src.split(",", 1)
+                ext = ".jpg" if "jpeg" in head or "jpg" in head else ".png"
+                d = paths.cache_dir() / "persist"
+                d.mkdir(parents=True, exist_ok=True)
+                f = d / f"ctxref_{int(time.time() * 1000)}{ext}"
+                f.write_bytes(base64.b64decode(b64))
+                return str(f)
+            except Exception:
+                return None
+        if "/file=" in src:
+            p = urllib.parse.unquote(src.split("/file=", 1)[1].split("?", 1)[0])
+            return p if os.path.isfile(p) else None
+        return src if os.path.isfile(src) else None
+
+    def _wire_context_menu(self, ui):
+        """Right-click → 'Replicant (Reference)': load the image as the Setup reference
+        and switch to our tab."""
+        relay = ui["components"]["setup"].get("ctx_relay")
+        reference = ui["components"]["setup"].get("reference_image")
+        if relay is None or reference is None:
+            return
+        tabs = getattr(self, "main_tabs", None)
+
+        def _to_reference(val):
+            src = (val or "").rsplit("|", 1)[0]
+            path = self._resolve_ctx_src(src)
+            if not path:
+                gr.Warning("Couldn't read that image for Replicant.")
+                return (gr.update(), gr.update()) if tabs is not None else gr.update()
+            gr.Info("Loaded into Replicant as the reference image.")
+            if tabs is not None:
+                return path, gr.Tabs(selected=PLUGIN_ID)  # set reference + switch tab
+            return path
+
+        outs = [reference, tabs] if tabs is not None else [reference]
+        relay.change(_to_reference, inputs=[relay], outputs=outs)
 
     def _wire_enhancer(self, ui):
         """Wire the Prompt step's Enhance buttons to Wan2GP's native enhancer."""
