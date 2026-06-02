@@ -202,10 +202,9 @@ def build_inpaint(visible: bool, init=None, lora_choices=None):
         gr.Markdown("### ④ Touch Up")
         gr.Markdown("*This step is completely optional.*")
         c = {}
-        c["touchup_mode"] = gr.Radio(["Inpaint", "Cohesion"], value="Inpaint",
-                                     label="Mode", show_label=False)
-        # --- Inpaint mode: paint a mask on the base, prompt-driven inpaint ----
-        with gr.Group(visible=True) as inpaint_grp:
+        with gr.Tabs() as touchup_tabs:
+          # --- Inpaint sub-tab: paint a mask on the base, prompt-driven inpaint --
+          with gr.Tab("Inpaint", id="inpaint"):
             with gr.Row():
                 with gr.Column(scale=1):
                     c["editor"] = gr.ImageEditor(label="Paint the area to fix", type="numpy",
@@ -248,11 +247,8 @@ def build_inpaint(visible: bool, init=None, lora_choices=None):
             c["inpaint_gallery"] = gr.Gallery(label="Results", height=640, columns=20,
                 rows=1, object_fit="contain", show_fullscreen_button=True,
                 elem_id="replicant-inpaint-out")
-        c["inpaint_grp"] = inpaint_grp
-        c["inpaint_picked"] = gr.State(None)
-        c["inpaint_prev_base"] = gr.State(None)  # for Revert
-        # --- Cohesion mode: gentle img2img normalize pass ---------------------
-        with gr.Group(visible=False) as cohesion_grp:
+          # --- Cohesion sub-tab: gentle img2img normalize pass ----------------
+          with gr.Tab("Cohesion", id="cohesion"):
             with gr.Row():
                 with gr.Column(scale=1):
                     c["cohesion_src"] = gr.Image(label="Source (current base)",
@@ -280,8 +276,10 @@ def build_inpaint(visible: bool, init=None, lora_choices=None):
                     c["use_cohesion"] = gr.Button("✓ Use selected as Base", variant="primary")
                     c["reuse_cohesion"] = gr.Button("↻ Send to Cohesion")
                     c["send_to_inpaint"] = gr.Button("→ Send to Inpaint")
-            c["cohesion_picked"] = gr.State(None)
-        c["cohesion_grp"] = cohesion_grp
+        c["touchup_tabs"] = touchup_tabs
+        c["inpaint_picked"] = gr.State(None)
+        c["inpaint_prev_base"] = gr.State(None)  # for Revert
+        c["cohesion_picked"] = gr.State(None)
     return g, c
 
 

@@ -436,13 +436,7 @@ class ReplicantCharLab(WAN2GPPlugin):
         inp["load_base"].click(lambda b: b, inputs=[base["selected_base"]],
                                outputs=[inp["editor"]])
 
-        # Mode radio swaps the two sub-panels.
-        inp["touchup_mode"].change(
-            lambda m: (gr.update(visible=(m == "Inpaint")),
-                       gr.update(visible=(m == "Cohesion"))),
-            inputs=[inp["touchup_mode"]],
-            outputs=[inp["inpaint_grp"], inp["cohesion_grp"]])
-
+        # Inpaint/Cohesion are native sub-tabs now (click either freely).
         # Keep both Touch Up sources mirroring the current base automatically.
         base["selected_base"].change(lambda b: (b or gr.update(), b or gr.update()),
                                      inputs=[base["selected_base"]],
@@ -542,27 +536,23 @@ class ReplicantCharLab(WAN2GPPlugin):
                                     inputs=[inp["inpaint_prev_base"]],
                                     outputs=[base["selected_base"]])
 
-        # Bounce a selected result between the two Touch Up modes as the new editable
-        # image — does NOT assign it as base.
+        # Bounce a selected result between the two Touch Up sub-tabs as the new
+        # editable image (switches tabs) — does NOT assign it as base.
         def _send_to_cohesion(picked):
             if not picked:
                 raise gr.Error("Click a result in the strip first.")
-            return (picked, "Cohesion",
-                    gr.update(visible=False), gr.update(visible=True))
+            return picked, gr.Tabs(selected="cohesion")
         inp["send_to_cohesion"].click(
             _send_to_cohesion, inputs=[inp["inpaint_picked"]],
-            outputs=[inp["cohesion_src"], inp["touchup_mode"],
-                     inp["inpaint_grp"], inp["cohesion_grp"]])
+            outputs=[inp["cohesion_src"], inp["touchup_tabs"]])
 
         def _send_to_inpaint(picked):
             if not picked:
                 raise gr.Error("Select a normalized result first.")
-            return (picked, "Inpaint",
-                    gr.update(visible=True), gr.update(visible=False))
+            return picked, gr.Tabs(selected="inpaint")
         inp["send_to_inpaint"].click(
             _send_to_inpaint, inputs=[inp["cohesion_picked"]],
-            outputs=[inp["editor"], inp["touchup_mode"],
-                     inp["inpaint_grp"], inp["cohesion_grp"]])
+            outputs=[inp["editor"], inp["touchup_tabs"]])
 
         # Send a selected result back into the SAME subtab as the editable image.
         def _need(p):
