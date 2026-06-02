@@ -53,8 +53,8 @@ button.replicant-tabbtn {
 
 /* Touch Up: options column is a fixed-height scroll box (Run + actions are in their
    own row below it); results strip scrolls sideways. */
-#replicant-inpaint-opts { height: 720px; max-height: 720px; overflow-y: auto;
-    flex: 0 0 auto; }
+#replicant-inpaint-opts { height: 720px; max-height: 720px;
+    overflow-y: auto; overflow-x: hidden; }
 #replicant-inpaint-out .grid-wrap { overflow-x: auto !important; }
 #replicant-inpaint-out .grid-container {
     display: flex !important; flex-wrap: nowrap !important; }
