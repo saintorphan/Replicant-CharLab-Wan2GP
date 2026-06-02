@@ -42,21 +42,21 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
 
     Returns a dict with ``step``, ``groups``, ``rail``, ``nav``, ``components``,
     ``settings`` (shared gen-settings bar) and ``prereqs``."""
-    # Header: banner (far left) · taglines (center) · Clear/Load/Save (right) -
+    # Header: taglines (left) · banner (center) · Clear Wizard (right) -------
     with gr.Row(elem_id="replicant-header"):
-        with gr.Column(scale=6, elem_id="replicant-bannercol"):
-            gr.HTML(_banner_html())
-            gr.HTML('<div class="replicant-ghlink"><a href="https://github.com/'
-                    'saintorphan/Replicant-CharLab-Wan2GP" target="_blank" '
-                    'rel="noopener">https://github.com/saintorphan/'
-                    'Replicant-CharLab-Wan2GP</a></div>', elem_classes="replicant-ghwrap")
-        with gr.Column(scale=4):
+        with gr.Column(scale=3):
             gr.HTML('<div class="replicant-taglines">'
                     '<div class="replicant-tagline">Transform a single prompt into a '
                     'character<br>LoRA for image and video!</div>'
                     '<div class="replicant-tagline">Supports Wan, LTX, Z-Image, Flux,<br>'
                     'SDXL, Pony, and Illustrious!</div>'
                     '</div>')
+        with gr.Column(scale=10, elem_id="replicant-bannercol"):
+            gr.HTML(_banner_html())
+            gr.HTML('<div class="replicant-ghlink"><a href="https://github.com/'
+                    'saintorphan/Replicant-CharLab-Wan2GP" target="_blank" '
+                    'rel="noopener">https://github.com/saintorphan/'
+                    'Replicant-CharLab-Wan2GP</a></div>', elem_classes="replicant-ghwrap")
         with gr.Column(scale=3, min_width=240, elem_id="replicant-clearcol"):
             with gr.Row():
                 header_load_btn = gr.Button("📂 Load", scale=1)
