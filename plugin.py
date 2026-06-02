@@ -606,12 +606,21 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         # -- step 6: pose variants (+ mandatory base-face swap) --
         def _gen_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
-                       width, height, pos, neg, sel_base, apply_face,
+                       width, height, pos, neg, sel_base, apply_face, apply_body,
+                       body_source, body_ip_scale, body_denoise,
                        progress=gr.Progress()):
             if not sel_base:
                 raise gr.Error("Generate/select a base image first (step 3).")
             if not (pos and pos.strip()):
                 raise gr.Error("Need a positive prompt (step 2).")
+            backend, ident = discovery.parse_model_value(model)
+            do_body = bool(apply_body) and bool(body_source)
+            if do_body and backend != "sd":
+                gr.Warning("Body swap to poses needs an SDXL/Pony/Illustrious model — "
+                           "skipping body swap.")
+                do_body = False
+            if do_body:
+                self._require(models.BODY_SWAP_KEYS, "Body swap to poses")
             if apply_face:
                 self._require(["inswapper_128", "buffalo_l"],
                               "Pose generation (base-face swap)")
@@ -634,19 +643,44 @@ class ReplicantCharLab(WAN2GPPlugin):
                             {"distance": ps.distance, "angle": ps.angle,
                              "orientation": ps.orientation}))
 
-            # Pass 2 — free the generator, then (optionally) apply the base face to
-            # each pose (only the swap models resident now). Never both families at once.
-            gen_sd.release_sd()
             out = paths.cache_dir() / "poses"
             out.mkdir(parents=True, exist_ok=True)
+            imgs = [(img, spec) for img, spec in raw if img]
+
+            # Pass 2a — BODY swap first (regenerates the body; head excluded). Must run
+            # before the face swap or it would overwrite the swapped face. SD-family
+            # inpaint pipe resident only; face models released.
+            if do_body:
+                gen_sd.release_sd()
+                self._release_faceswap()
+                bodied = []
+                for i, (img, spec) in enumerate(imgs):
+                    final = img
+                    progress((i, len(imgs)), desc=f"Body swap {i + 1}/{len(imgs)}")
+                    try:
+                        if self.acquire_gpu(state):
+                            try:
+                                r = gen_sd.body_swap(
+                                    ident, img, body_source, pos, neg,
+                                    ip_scale=float(body_ip_scale),
+                                    denoise=float(body_denoise), adetailer=False,
+                                    progress=progress)
+                                final = r or img
+                            finally:
+                                self.release_gpu(state)
+                    except Exception:
+                        traceback.print_exc()
+                    bodied.append((final, spec))
+                imgs = bodied
+
+            # Pass 2b — FACE swap last (so it isn't overwritten by the body pass).
+            gen_sd.release_sd()
             gallery, specs = [], []
             fp = self._face_pipe() if apply_face else None
-            for i, (img, spec) in enumerate(raw):
-                if not img:
-                    continue
+            for i, (img, spec) in enumerate(imgs):
                 final = img
                 if apply_face:
-                    progress((i, len(raw)), desc=f"Applying base face {i + 1}/{len(raw)}")
+                    progress((i, len(imgs)), desc=f"Applying base face {i + 1}/{len(imgs)}")
                     try:
                         if self.acquire_gpu(state):
                             try:
@@ -669,7 +703,9 @@ class ReplicantCharLab(WAN2GPPlugin):
         pose["generate"].click(
             _gen_poses,
             inputs=[self.state] + SET + [prm["positive_prompt"], prm["negative_prompt"],
-                                         base["selected_base"], pose["apply_face_to_poses"]],
+                                         base["selected_base"], pose["apply_face_to_poses"],
+                                         pose["apply_body_to_poses"], swap["body_source"],
+                                         swap["body_ip_scale"], swap["body_denoise"]],
             outputs=[pose["pose_gallery"], ui["poses_state"]])
 
     def _wire_enhancer(self, ui):
