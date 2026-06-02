@@ -606,24 +606,29 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         # -- step 6: pose variants (+ mandatory base-face swap) --
         def _gen_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
-                       width, height, pos, neg, sel_base, apply_face, apply_body,
-                       body_source, body_ip_scale, body_denoise,
+                       width, height, pos, neg, sel_base, face_mode, body_mode,
+                       face_ref, body_ref, body_ip_scale, body_denoise,
                        progress=gr.Progress()):
             if not sel_base:
                 raise gr.Error("Generate/select a base image first (step 3).")
             if not (pos and pos.strip()):
                 raise gr.Error("Need a positive prompt (step 2).")
             backend, ident = discovery.parse_model_value(model)
-            do_body = bool(apply_body) and bool(body_source)
+            # Resolve the face/body sources from the None/Use Base/Use Reference modes.
+            face_src = sel_base if face_mode == "Use Base" else (
+                face_ref if face_mode == "Use Reference" else None)
+            body_src = sel_base if body_mode == "Use Base" else (
+                body_ref if body_mode == "Use Reference" else None)
+            apply_face = bool(face_src)
+            do_body = bool(body_src)
             if do_body and backend != "sd":
-                gr.Warning("Body swap to poses needs an SDXL/Pony/Illustrious model — "
-                           "skipping body swap.")
+                gr.Warning("Body double needs an SDXL/Pony/Illustrious model — "
+                           "skipping body double.")
                 do_body = False
             if do_body:
-                self._require(models.BODY_SWAP_KEYS, "Body swap to poses")
+                self._require(models.BODY_SWAP_KEYS, "Body double for poses")
             if apply_face:
-                self._require(["inswapper_128", "buffalo_l"],
-                              "Pose generation (base-face swap)")
+                self._require(["inswapper_128", "buffalo_l"], "Pose face swap")
             P = poses.POSES
 
             # Pass 1 — generate every pose with ONLY the generator resident
@@ -661,7 +666,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                         if self.acquire_gpu(state):
                             try:
                                 r = gen_sd.body_swap(
-                                    ident, img, body_source, pos, neg,
+                                    ident, img, body_src, pos, neg,
                                     ip_scale=float(body_ip_scale),
                                     denoise=float(body_denoise), adetailer=False,
                                     progress=progress)
@@ -680,11 +685,11 @@ class ReplicantCharLab(WAN2GPPlugin):
             for i, (img, spec) in enumerate(imgs):
                 final = img
                 if apply_face:
-                    progress((i, len(imgs)), desc=f"Applying base face {i + 1}/{len(imgs)}")
+                    progress((i, len(imgs)), desc=f"Applying face {i + 1}/{len(imgs)}")
                     try:
                         if self.acquire_gpu(state):
                             try:
-                                swapped = fp.swap(source_path=sel_base, target_path=img)
+                                swapped = fp.swap(source_path=face_src, target_path=img)
                                 fp_path = out / f"pose_{i + 1:03d}.png"
                                 swapped.save(fp_path)
                                 final = str(fp_path)
@@ -703,10 +708,20 @@ class ReplicantCharLab(WAN2GPPlugin):
         pose["generate"].click(
             _gen_poses,
             inputs=[self.state] + SET + [prm["positive_prompt"], prm["negative_prompt"],
-                                         base["selected_base"], pose["apply_face_to_poses"],
-                                         pose["apply_body_to_poses"], swap["body_source"],
-                                         swap["body_ip_scale"], swap["body_denoise"]],
+                                         base["selected_base"], pose["face_mode"],
+                                         pose["body_mode"], swap["face_source"],
+                                         swap["body_source"], swap["body_ip_scale"],
+                                         swap["body_denoise"]],
             outputs=[pose["pose_gallery"], ui["poses_state"]])
+
+        # "Use Reference" is only offered when a face/body reference exists on Human Clone.
+        def _ref_opts(src, base):
+            opts = ["None", "Use Base"] + (["Use Reference"] if src else [])
+            return gr.update(choices=opts)
+        swap["face_source"].change(_ref_opts, inputs=[swap["face_source"], base["selected_base"]],
+                                   outputs=[pose["face_mode"]])
+        swap["body_source"].change(_ref_opts, inputs=[swap["body_source"], base["selected_base"]],
+                                   outputs=[pose["body_mode"]])
 
     def _wire_enhancer(self, ui):
         """Wire the Prompt step's Enhance buttons to Wan2GP's native enhancer."""

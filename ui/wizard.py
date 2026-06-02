@@ -228,7 +228,7 @@ _PERSIST_SPEC = {
                 "inpaint_loras", "inpaint_lora_mult",
                 "cohesion_prompt", "cohesion_neg", "cohesion_cfg", "cohesion_steps",
                 "cohesion_focus"],
-    "poses": ["ref_look_strength", "apply_face_to_poses", "apply_body_to_poses"],
+    "poses": ["ref_look_strength", "face_mode", "body_mode"],
     "train": ["dataset", "low_vram", "epochs"],
 }
 # IMAGE/gallery fields persisted separately: copied to a stable dir and restored

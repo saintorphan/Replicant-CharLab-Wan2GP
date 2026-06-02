@@ -290,15 +290,22 @@ def build_poses(visible: bool, init=None):
                     "varied angles). The base face is applied to each for identity "
                     "consistency, then you approve the keepers.</sub>")
         c = {}
+        face_ref = bool(_init_img(init, "swap.face_source"))
+        body_ref = bool(_init_img(init, "swap.body_source"))
         with gr.Row():
             c["ref_look_strength"] = gr.Slider(0.0, 1.0, value=0.7,
                 label="Reference look strength (base → poses)")
-            c["apply_face_to_poses"] = gr.Checkbox(value=True, label="Apply face swap to poses")
-            c["apply_body_to_poses"] = gr.Checkbox(value=True, label="Apply body swap to poses")
+            c["face_mode"] = gr.Radio(
+                ["None", "Use Base"] + (["Use Reference"] if face_ref else []),
+                value="Use Base", label="Face swap")
+            c["body_mode"] = gr.Radio(
+                ["None", "Use Base"] + (["Use Reference"] if body_ref else []),
+                value="None", label="Body double")
         c["generate"] = gr.Button("Generate poses", variant="primary")
         c["pose_gallery"] = gr.Gallery(label="Poses (approve to keep)", columns=4,
                                        height=760, object_fit="contain",
                                        show_fullscreen_button=True,
+                                       elem_id="replicant-pose-out",
                                        value=_init_gallery(init, "poses.pose_gallery"))
     return g, c
 
