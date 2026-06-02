@@ -150,6 +150,27 @@ def get_shared(key: str, default=None):
     return default if v is None else v
 
 
+def browse_root() -> str:
+    """Root dir for the folder-browser (gr.FileExplorer). The browser is only a
+    LOCAL setup convenience (once a model dir is picked it's saved forever), so:
+      1. an explicit cross-plugin ``fs_browse_root`` wins (set it to confine — or
+         to a drive root if your models live outside home), else
+      2. auto-confine to home when the app is exposed via --listen/--share
+         (best-effort detect — stops a remote browser from enumerating the FS), else
+      3. "/" — browse anywhere (fine on a local single-user machine)."""
+    v = get_shared("fs_browse_root", "")
+    if v:
+        return str(Path(v).expanduser())
+    try:  # best-effort: confine when remotely exposed (wgp sets __main__.args)
+        import sys
+        a = getattr(sys.modules.get("__main__"), "args", None)
+        if a is not None and (getattr(a, "listen", False) or getattr(a, "share", False)):
+            return str(Path.home())
+    except Exception:
+        pass
+    return "/"
+
+
 def set_shared(key: str, value) -> None:
     """Persist any JSON value to the cross-plugin .orphansuite.json. Re-reads the
     file fresh and MERGES, so a concurrent sibling plugin's keys aren't clobbered."""

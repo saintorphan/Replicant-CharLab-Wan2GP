@@ -16,11 +16,14 @@ from .settings_bar import SAMPLERS, SCHEDULERS
 
 def _dir_row(label: str, value: str):
     """One path line: editable textbox + a 📁 browse toggle revealing a
-    FileExplorer rooted at '/'. Selecting a folder fills the textbox."""
+    FileExplorer. The browse root follows paths.browse_root() (full FS locally,
+    auto-confined under --listen/--share, overridable in OrphanSuite). Selecting a
+    folder fills the textbox; the textbox stays editable so any path can be typed."""
     with gr.Row():
         tb = gr.Textbox(value=value, label=label, scale=8, max_lines=1)
         browse = gr.Button("📁", scale=0, min_width=44)
-    explorer = gr.FileExplorer(root_dir="/", label=f"Pick a folder for {label}",
+    explorer = gr.FileExplorer(root_dir=paths.browse_root(),
+                               label=f"Pick a folder for {label}",
                                file_count="single", visible=False)
     browse.click(lambda v: gr.update(visible=not v),
                  inputs=[gr.State(False)], outputs=[explorer])
@@ -115,6 +118,30 @@ def build_prereqs():
                     return f"⚠️ {e}"
 
             link_btn.click(_link, inputs=[link_src, link_target], outputs=[link_status])
+
+            gr.Markdown(
+                "**Folder-browser root** — what the 📁 pickers above can browse "
+                "(shared across plugins). Blank = auto: the whole filesystem locally, "
+                "but auto-confined to your home folder when the app runs with "
+                "`--listen`/`--share` (you only need the browser for local setup). "
+                "Set a path to force it (e.g. a models drive, or your home to lock it "
+                "down). **Applies on app restart.**")
+            with gr.Row():
+                browse_root_tb = gr.Textbox(
+                    label="Folder-browser root (blank = auto)",
+                    value=paths.get_shared("fs_browse_root", ""),
+                    placeholder="(auto) — or e.g. /mnt/data4  or  " + str(paths.lab_root().home()),
+                    scale=4)
+                browse_root_save = gr.Button("Save browser root", scale=1)
+            browse_root_status = gr.Markdown()
+
+            def _save_browse_root(v):
+                paths.set_shared("fs_browse_root", (v or "").strip())
+                eff = paths.browse_root()
+                return f"✅ Saved. Browser root → `{eff}` (effective on restart)."
+
+            browse_root_save.click(_save_browse_root, inputs=[browse_root_tb],
+                                   outputs=[browse_root_status])
 
         # -- Default Generation Values (per family; shared via .orphansuite.json) --
         with gr.Accordion("Default Generation Values (per family)", open=False,
