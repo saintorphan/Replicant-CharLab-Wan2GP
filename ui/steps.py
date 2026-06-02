@@ -330,7 +330,13 @@ def build_poses(visible: bool, init=None):
                     "(txt2img)** = fresh image. **Color match** (only on Cohesion/Re-Roll) "
                     "retones the body to the base for skin-tone consistency.</sub>")
         # Fixed grid: one (image + dropdown + color-match) slot per pose.
+        # Per-pose dropdown + color selections persist across reloads (saved to
+        # wizard_state by _wire_persistence, restored here from init).
         saved = (init or {}).get("poses.pose_gallery") or []
+        _ch = (init or {}).get("poses.choices") or []
+        _co = (init or {}).get("poses.colors") or []
+        _DD = ["Approve", "Sharpen (no upscale)", "Cohesion (img2img)",
+               "Re-Roll (img2img)", "Regenerate (txt2img)"]
         c["pose_imgs"], c["pose_choices"], c["pose_color"] = [], [], []
         c["pose_abort"] = []
         for r in range(0, n, 4):
@@ -342,15 +348,16 @@ def build_poses(visible: bool, init=None):
                                        value=(saved[idx] if idx < len(saved) and
                                               os.path.isfile(str(saved[idx])) else None))
                         with gr.Row():
-                            dd = gr.Dropdown(["Approve", "Sharpen (no upscale)",
-                                              "Cohesion (img2img)", "Re-Roll (img2img)",
-                                              "Regenerate (txt2img)"],
-                                             value="Re-Roll (img2img)", container=False,
-                                             show_label=False, scale=5)
+                            dd = gr.Dropdown(_DD, container=False, show_label=False,
+                                             scale=5,
+                                             value=(_ch[idx] if idx < len(_ch)
+                                                    and _ch[idx] in _DD
+                                                    else "Re-Roll (img2img)"))
                             ab = gr.Button("⛔", variant="stop", scale=0, min_width=40,
                                            elem_classes="replicant-pose-abort")
-                        cm = gr.Checkbox(value=False, label="Color match",
-                                         container=False)
+                        cm = gr.Checkbox(label="Color match", container=False,
+                                         value=(bool(_co[idx]) if idx < len(_co)
+                                                else False))
                         c["pose_imgs"].append(img)
                         c["pose_choices"].append(dd)
                         c["pose_color"].append(cm)

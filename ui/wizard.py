@@ -340,6 +340,20 @@ def _wire_persistence(comps, settings, poses_state, init):
     # Pose images persist via the plugin's _persist_poses; here we just clear them.
     pose_imgs = comps.get("poses", {}).get("pose_imgs") or []
 
+    # --- per-pose dropdowns + color checkboxes (lists; restored in build_poses) ---
+    pose_choices = list(comps.get("poses", {}).get("pose_choices") or [])
+    pose_colors = list(comps.get("poses", {}).get("pose_color") or [])
+    if pose_choices:
+        def _save_choices(*vals):
+            d = wizard_state.load(); d["poses.choices"] = list(vals); wizard_state.save(d)
+        for _dd in pose_choices:
+            _dd.change(_save_choices, inputs=pose_choices, outputs=[])
+    if pose_colors:
+        def _save_colors(*vals):
+            d = wizard_state.load(); d["poses.colors"] = list(vals); wizard_state.save(d)
+        for _cm in pose_colors:
+            _cm.change(_save_colors, inputs=pose_colors, outputs=[])
+
     # --- Clear Wizard (form reset) + Clear Cache (delete files), both confirmed ---
     su = comps["setup"]
     clear_btn = su.get("clear_btn")
