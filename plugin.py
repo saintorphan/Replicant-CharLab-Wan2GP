@@ -13,7 +13,7 @@ import gradio as gr
 
 from shared.utils.plugins import WAN2GPPlugin
 
-try:  # GPU arbitration with the main Video Generator (see wan2gp-sample)
+try:  # GPU arbitration with the main Video Generator + other plugins (e.g. ImageSuite)
     from shared.utils.process_locks import (acquire_GPU_ressources,
                                             any_GPU_process_running,
                                             release_GPU_ressources)
@@ -143,18 +143,40 @@ class ReplicantCharLab(WAN2GPPlugin):
                 return gr.update()
         return gr.update()
 
-    # -- GPU arbitration helpers (used by step actions, wired later) --------
+    # -- GPU arbitration: shared with the base app + other plugins (ImageSuite) ---
+    def _free_all_vram(self):
+        """Release every model Replicant may have resident. Used as the GPU-resident
+        reclaim callback so the base app / another plugin can take the GPU."""
+        try:
+            gen_sd.release_sd()
+            gen_sd.release_inpaint()
+            self._release_faceswap()
+            gen_sd._free_torch()
+        except Exception:
+            traceback.print_exc()
+
     def acquire_gpu(self, state):
+        """Acquire the shared GPU lock — BLOCKS (raises) if ANY inference is running
+        (base app or another plugin). Frees other registered residents on acquire."""
         if not _HAVE_LOCKS:
             return True
         if any_GPU_process_running(state, PLUGIN_ID):
-            gr.Error("Another process is using the GPU")
-            return False
+            raise gr.Error("GPU is busy — another generation (the Video Generator or "
+                           "another plugin) is running. Wait for it to finish.")
         acquire_GPU_ressources(state, PLUGIN_ID, PLUGIN_NAME, gr=gr)
         return True
 
     def release_gpu(self, state):
-        if _HAVE_LOCKS:
+        """Release the lock but keep our pipelines cached, registering a reclaim
+        callback so the base app / ImageSuite can free our VRAM when they need the GPU."""
+        if not _HAVE_LOCKS:
+            return
+        try:
+            release_GPU_ressources(state, PLUGIN_ID, keep_resident=True,
+                                   process_name=PLUGIN_NAME,
+                                   release_vram_callback=self._free_all_vram,
+                                   force_release_on_acquire=True)
+        except TypeError:  # older host without the resident kwargs
             release_GPU_ressources(state, PLUGIN_ID)
 
     @staticmethod
