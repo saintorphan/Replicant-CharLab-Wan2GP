@@ -221,7 +221,8 @@ class ReplicantCharLab(WAN2GPPlugin):
         model_dd = s.get("model")
         if model_dd is None:
             return
-        choices = self._loras_for_model(getattr(model_dd, "value", "") or "")
+        mv = getattr(model_dd, "value", "") or ""
+        choices = self._loras_for_model(mv)
         valid = {v for _, v in choices}
         inp = (ui.get("components") or {}).get("inpaint") or {}
         for dd in (s.get("loras"), inp.get("inpaint_loras")):
@@ -230,6 +231,15 @@ class ReplicantCharLab(WAN2GPPlugin):
             dd.choices = list(choices)
             cur = dd.value if isinstance(dd.value, list) else ([dd.value] if dd.value else [])
             dd.value = [v for v in cur if v in valid]
+        # Resolution tiers are family-specific too — repopulate for the restored
+        # model and keep the persisted value only if it's a valid tier.
+        res_dd = s.get("resolution")
+        if res_dd is not None and mv:
+            tiers = presets.resolution_tiers(mv, self.get_default_settings)
+            res_dd.choices = list(tiers)
+            valid_res = {v for _, v in tiers}
+            if getattr(res_dd, "value", None) not in valid_res:
+                res_dd.value = presets.recommended_resolution(mv, self.get_default_settings)
 
     def _native_loras(self, model_type):
         """LoRA files in this native model's own Wan2GP LoRA dir → dropdown
@@ -322,6 +332,12 @@ class ReplicantCharLab(WAN2GPPlugin):
         return ui
 
     # -- generation backends ------------------------------------------------
+    @staticmethod
+    def _res(resolution, orientation="portrait"):
+        """(w, h) for the locked 'WxH' portrait resolution in a pose orientation:
+        portrait (as-is), square 1:1 (sitting), or landscape (reclining/laying)."""
+        return presets.oriented(resolution, orientation)
+
     def _face_pipe(self):
         if self._faceswap is None:
             self._faceswap = faceswap.FaceSwapPipeline(str(paths.models_dir() / "face"))
@@ -574,18 +590,18 @@ class ReplicantCharLab(WAN2GPPlugin):
         api = self._api
 
         # SET is the shared settings-bar inputs passed to every generation handler.
-        # loras + multipliers ride at the end so they reach base/pose/reimagine gen.
+        # 'resolution' is the portrait base 'WxH' (poses auto-orient from it); loras
+        # + multipliers ride at the end so they reach base/pose/reimagine gen.
         SET = [s["model"], s["sampler"], s["scheduler"], s["steps"], s["cfg_scale"],
-               s["clip_skip"], s["seed"], s["width"], s["height"],
+               s["clip_skip"], s["seed"], s["resolution"],
                s["loras"], s["lora_multipliers"]]
 
         # On model switch: scope LoRAs to the model's family AND auto-populate the
-        # recommended cfg/steps/sampler/scheduler + portrait resolution.
+        # recommended cfg/steps/sampler/scheduler + the resolution tier list.
         #   - native (Flux/Z-Image/Qwen): LoRAs from that model's own Wan2GP dir.
         #   - SD (SDXL/Pony/Illustrious): LoRAs filtered by name-based family.
         # setting_keys maps the preset dict onto the settings-bar controls.
-        setting_keys = ["sampler", "scheduler", "steps", "cfg", "clip_skip",
-                        "width", "height"]
+        setting_keys = ["sampler", "scheduler", "steps", "cfg", "clip_skip"]
         _key_to_ctl = {"cfg": "cfg_scale"}  # preset key → settings-bar component key
 
         def _on_model(model_value):
@@ -603,26 +619,31 @@ class ReplicantCharLab(WAN2GPPlugin):
             rec = presets.for_model(model_value, self.get_default_settings)
             ups = [gr.update(value=rec[k]) if k in rec else gr.update()
                    for k in setting_keys]
-            return [lora_up, lora_up] + ups  # settings bar + inpaint LoRAs, then settings
+            # Resolution: repopulate the tier list + select the recommended one.
+            res_up = gr.update(
+                choices=presets.resolution_tiers(model_value, self.get_default_settings),
+                value=presets.recommended_resolution(model_value, self.get_default_settings))
+            return [lora_up, lora_up] + ups + [res_up]
 
         s["model"].change(
             _on_model, inputs=[s["model"]],
             outputs=[s["loras"], c["inpaint"]["inpaint_loras"]]
-            + [s[_key_to_ctl.get(k, k)] for k in setting_keys])
+            + [s[_key_to_ctl.get(k, k)] for k in setting_keys] + [s["resolution"]])
 
         # -- base candidates --
         def _gen_base(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
-                      width, height, loras, lora_mult, pos, neg, count,
+                      resolution, loras, lora_mult, pos, neg, count,
                       progress=gr.Progress()):
             if not (pos and pos.strip()):
                 raise gr.Error("Build or enhance a positive prompt on step 2 first.")
             gen_sd.clear_abort()  # don't inherit a stale abort flag from a prior run
             self._release_faceswap()  # base gen is pure SD — free InsightFace VRAM
+            bw, bh = self._res(resolution, "portrait")  # base = portrait reference
             files, n = [], int(count)
             for i in range(n):
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
                 progress((i, n), desc=f"Base {i + 1}/{n}")
-                files += self._gen_image(state, model, pos, neg, width, height,
+                files += self._gen_image(state, model, pos, neg, bw, bh,
                                          steps, cfg, sd, sampler, scheduler, clip_skip,
                                          loras=loras, lora_mult=lora_mult, api=api)
             if not files:
@@ -649,7 +670,7 @@ class ReplicantCharLab(WAN2GPPlugin):
         # Reimagine the reference (img2img). SD-family runs locally; native
         # (Flux/Qwen/Z-Image) routes through Wan2GP's queue if it supports a guide.
         def _reimagine(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
-                       width, height, loras, lora_mult, pos, neg, denoise, count,
+                       resolution, loras, lora_mult, pos, neg, denoise, count,
                        ref_img, progress=gr.Progress()):
             backend, ident = discovery.parse_model_value(model)
             if not backend:
@@ -660,13 +681,14 @@ class ReplicantCharLab(WAN2GPPlugin):
                 raise gr.Error("Build or enhance a positive prompt on step 2 first.")
             gen_sd.clear_abort()  # don't inherit a stale abort flag from a prior run
             self._release_faceswap()
+            rw, rh = self._res(resolution, "portrait")  # reimagine the reference in portrait
             files, n = [], int(count)
             if backend == "native":
                 for i in range(n):
                     sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
                     progress((i, n), desc=f"Reimagining {i + 1}/{n} (img2img)")
                     files += self._gen_native(
-                        ident, pos, neg, width, height, steps, cfg, sd,
+                        ident, pos, neg, rw, rh, steps, cfg, sd,
                         mode="img2img", denoise=float(denoise), guide_path=ref_img,
                         loras=loras, mult_str=lora_mult, api=api)
             else:  # sd
@@ -678,7 +700,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                         sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
                         progress((i, n), desc=f"Reimagining {i + 1}/{n} (img2img)")
                         files += gen_sd.generate_img2img(
-                            ident, ref_img, pos, neg, width, height, steps, cfg, sd,
+                            ident, ref_img, pos, neg, rw, rh, steps, cfg, sd,
                             denoise=float(denoise), sampler=sampler, scheduler=scheduler,
                             clip_skip=int(clip_skip), loras=sd_loras)
                 finally:
@@ -1040,10 +1062,16 @@ class ReplicantCharLab(WAN2GPPlugin):
                                   outputs=[base["selected_base"]])
 
         # -- step 6: pose variants (+ mandatory base-face swap) --
-        def _pose_adet(fa, fpos, fneg, ba, bpos, bneg, backend):
-            """Build the ADetailer dict for poses + require its models (this tab's own)."""
-            ad = {"face": bool(fa), "face_pos": fpos, "face_neg": fneg,
-                  "body": bool(ba) and backend == "sd", "body_pos": bpos, "body_neg": bneg}
+        def _pose_adet(fa, fpos, fneg, ba, bpos, bneg, sdxl_ident):
+            """Build the ADetailer dict for poses + require its models. Both ADetailer
+            passes are SDXL inpaint, so they need an SDXL checkpoint (the main model
+            if it's SD, else the Body-swap/detail model) — gate on sdxl_ident."""
+            has_sdxl = bool(sdxl_ident)
+            ad = {"face": bool(fa) and has_sdxl, "face_pos": fpos, "face_neg": fneg,
+                  "body": bool(ba) and has_sdxl, "body_pos": bpos, "body_neg": bneg}
+            if (bool(fa) or bool(ba)) and not has_sdxl:
+                gr.Warning("Pose ADetailer needs an SDXL checkpoint — pick one in "
+                           "'Body-swap / detail model' — skipping the detail pass.")
             if ad["face"]:
                 self._require(["buffalo_l"], "Pose face ADetailer")
             if ad["body"]:
@@ -1051,32 +1079,37 @@ class ReplicantCharLab(WAN2GPPlugin):
             return ad
 
         def _gen_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
-                       width, height, loras, lora_mult, pos, neg, sel_base,
+                       resolution, loras, lora_mult, pos, neg, sel_base,
                        face_mode, body_mode, face_ref, body_ref, body_ip_scale,
                        body_denoise, pose_face_adet, pfa_pos, pfa_neg,
-                       pose_body_adet, pba_pos, pba_neg, progress=gr.Progress()):
+                       pose_body_adet, pba_pos, pba_neg, pose_sdxl,
+                       progress=gr.Progress()):
             if not sel_base:
                 raise gr.Error("Generate/select a base image first (step 3).")
             if not (pos and pos.strip()):
                 raise gr.Error("Need a positive prompt (step 2).")
             backend, ident = discovery.parse_model_value(model)
+            # SDXL checkpoint for the SDXL-only enhancement passes (body swap +
+            # ADetailer): the main model when it's SD, else the chosen detail model —
+            # so a native (Flux/Z-Image) pose can still get a body double.
+            sdxl_ident = ident if backend == "sd" else (pose_sdxl or "")
             # Resolve the face/body sources from the None/Use Base/Use Reference modes.
             face_src = sel_base if face_mode == "Use Base" else (
                 face_ref if face_mode == "Use Reference" else None)
             body_src = sel_base if body_mode == "Use Base" else (
                 body_ref if body_mode == "Use Reference" else None)
             apply_face = bool(face_src)
-            do_body = bool(body_src)
-            if do_body and backend != "sd":
-                gr.Warning("Body double needs an SDXL/Pony/Illustrious model — "
-                           "skipping body double.")
-                do_body = False
+            do_body = bool(body_src) and bool(sdxl_ident)
+            if bool(body_src) and not sdxl_ident:
+                gr.Warning("Body double needs an SDXL checkpoint — pick one in "
+                           "'Body-swap / detail model' (a native pose model can't "
+                           "body-swap itself) — skipping body double.")
             if do_body:
                 self._require(models.BODY_SWAP_KEYS, "Body double for poses")
             if apply_face:
                 self._require(["inswapper_128", "buffalo_l"], "Pose face swap")
             adet = _pose_adet(pose_face_adet, pfa_pos, pfa_neg,
-                              pose_body_adet, pba_pos, pba_neg, backend)
+                              pose_body_adet, pba_pos, pba_neg, sdxl_ident)
             P = poses.POSES
             # Replicate OVERRIDES the base prompt's framing: the base prompt carries
             # "standing front, full body, head to toe" to keep the BASE image a clean
@@ -1100,8 +1133,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                     raw.append((None, spec))
                     continue
                 progress((i, len(P)), desc=f"Generating pose {i + 1}/{len(P)} ({ps.distance}/{ps.angle})")
-                pw, ph = (max(width, height), min(width, height)) if ps.orientation == "landscape" \
-                    else (min(width, height), max(width, height))
+                pw, ph = self._res(resolution, ps.orientation)  # portrait/square/landscape
                 p_pos = ", ".join(p for p in (base_clean, ps.description) if p)
                 p_neg = poses.pose_negative_for(ps.distance, neg)
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
@@ -1122,8 +1154,9 @@ class ReplicantCharLab(WAN2GPPlugin):
                 specs = [sp for _, sp in raw]
             else:
                 # Keep all N slots aligned (None for any that failed to generate).
+                # sdxl_ident (not the pose-gen ident) drives the SDXL swap/detail passes.
                 gallery, specs = self._pose_swaps(
-                    state, ident, raw, pos, neg, do_body, body_src, body_ip_scale,
+                    state, sdxl_ident, raw, pos, neg, do_body, body_src, body_ip_scale,
                     body_denoise, apply_face, face_src, out, progress, adet=adet)
             if not any(gallery):
                 raise gr.Error("Aborted — no poses generated." if gen_sd.was_aborted()
@@ -1138,7 +1171,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                                         swap["body_denoise"], pose["pose_face_adet"],
                                         pose["pose_face_adet_pos"], pose["pose_face_adet_neg"],
                                         pose["pose_body_adet"], pose["pose_body_adet_pos"],
-                                        pose["pose_body_adet_neg"]]
+                                        pose["pose_body_adet_neg"], pose["pose_sdxl_model"]]
         pose_out = pose["pose_imgs"] + [ui["poses_state"]]
 
         # -- Replicate aborts: master (stop the batch) + per-pose (skip/interrupt one) --
@@ -1169,10 +1202,11 @@ class ReplicantCharLab(WAN2GPPlugin):
         _N = len(poses.POSES)
 
         def _rerun_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
-                         width, height, loras, lora_mult, pos, neg, sel_base,
+                         resolution, loras, lora_mult, pos, neg, sel_base,
                          face_mode, body_mode, face_ref, body_ref, body_ip_scale,
                          body_denoise, pose_face_adet, pfa_pos, pfa_neg,
-                         pose_body_adet, pba_pos, pba_neg, *rest, progress=gr.Progress()):
+                         pose_body_adet, pba_pos, pba_neg, pose_sdxl, *rest,
+                         progress=gr.Progress()):
             cur = list(rest[:_N])
             choices = list(rest[_N:2 * _N])
             colors = list(rest[2 * _N:3 * _N])
@@ -1180,14 +1214,18 @@ class ReplicantCharLab(WAN2GPPlugin):
             if not any(cur):
                 raise gr.Error("Generate poses first.")
             backend, ident = discovery.parse_model_value(model)
+            sdxl_ident = ident if backend == "sd" else (pose_sdxl or "")  # see _gen_poses
             face_src = sel_base if face_mode == "Use Base" else (
                 face_ref if face_mode == "Use Reference" else None)
             body_src = sel_base if body_mode == "Use Base" else (
                 body_ref if body_mode == "Use Reference" else None)
             apply_face = bool(face_src)
-            do_body = bool(body_src) and backend == "sd"
+            do_body = bool(body_src) and bool(sdxl_ident)
+            if bool(body_src) and not sdxl_ident:
+                gr.Warning("Body double needs an SDXL checkpoint — pick one in "
+                           "'Body-swap / detail model' — skipping body double.")
             adet = _pose_adet(pose_face_adet, pfa_pos, pfa_neg,
-                              pose_body_adet, pba_pos, pba_neg, backend)
+                              pose_body_adet, pba_pos, pba_neg, sdxl_ident)
             if do_body:
                 self._require(models.BODY_SWAP_KEYS, "Body double for poses")
             if apply_face:
@@ -1226,10 +1264,8 @@ class ReplicantCharLab(WAN2GPPlugin):
                 p_pos = ", ".join(p for p in (base_clean, desc) if p)
                 p_neg = poses.pose_negative_for(
                     (ps.distance if ps else spec.get("distance", "full")), neg)
-                orientation = ps.orientation if ps else spec.get("orientation")
-                pw, ph = (max(width, height), min(width, height)) \
-                    if orientation == "landscape" \
-                    else (min(width, height), max(width, height))
+                orientation = ps.orientation if ps else spec.get("orientation", "portrait")
+                pw, ph = self._res(resolution, orientation)  # portrait/square/landscape
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
                 img2img = choice in ("Cohesion (img2img)", "Re-Roll (img2img)")
                 if img2img and backend == "native":
@@ -1279,7 +1315,7 @@ class ReplicantCharLab(WAN2GPPlugin):
             if to_swap and not gen_sd.was_aborted():
                 items = [(im, sp) for (_, im, sp) in to_swap]
                 swapped, _ = self._pose_swaps(
-                    state, ident, items, pos, neg, do_body, body_src, body_ip_scale,
+                    state, sdxl_ident, items, pos, neg, do_body, body_src, body_ip_scale,
                     body_denoise, apply_face, face_src, paths.cache_dir() / "poses",
                     progress, start_idx=1000, adet=adet)
                 # Color match (only for ticked Cohesion/Re-Roll poses) → base tones.

@@ -149,3 +149,54 @@ def for_model(model_value, get_default_settings=None) -> dict:
         base.update(_native_from_model(model_value, get_default_settings))
     base.update(user_overrides().get(fam) or {})  # user choice wins
     return base
+
+
+# --- resolution (locked to the family's trained portrait aspect) -----------
+
+def _portrait_base(model_value, get_default_settings=None):
+    """The recommended PORTRAIT (w, h) for a model — width <= height."""
+    rec = for_model(model_value, get_default_settings)
+    w, h = rec.get("width") or 832, rec.get("height") or 1216
+    return min(w, h), max(w, h)
+
+
+def recommended_resolution(model_value, get_default_settings=None) -> str:
+    """The recommended portrait resolution as a 'WxH' string."""
+    pw, ph = _portrait_base(model_value, get_default_settings)
+    return f"{pw}x{ph}"
+
+
+def resolution_tiers(model_value, get_default_settings=None) -> list:
+    """Dropdown choices [(label, 'WxH')] of portrait resolutions at the family's
+    trained aspect — a few size tiers around the recommended one. The user can pick
+    a smaller/larger size but NOT a different aspect (Replicant locks aspect)."""
+    pw, ph = _portrait_base(model_value, get_default_settings)
+    seen, tiers = set(), []
+    for scale in (0.66, 0.83, 1.0, 1.2, 1.4):
+        w, h = _snap(pw * scale), _snap(ph * scale)
+        if (w, h) not in seen:
+            seen.add((w, h))
+            tiers.append((w, h))
+    if (pw, ph) not in seen:
+        tiers.append((pw, ph))
+    tiers.sort(key=lambda wh: wh[0] * wh[1])
+    return [(f"{w}×{h}" + (" — recommended" if (w, h) == (pw, ph) else ""), f"{w}x{h}")
+            for (w, h) in tiers]
+
+
+def oriented(resolution_str, orientation="portrait") -> tuple:
+    """A 'WxH' portrait resolution → (w, h) for a pose orientation:
+    portrait (as-is), landscape (swapped), or square (1:1 at ~the same area)."""
+    import math
+    try:
+        a, b = str(resolution_str).lower().split("x")
+        a, b = int(a), int(b)
+    except Exception:
+        a, b = 832, 1216
+    pw, ph = min(a, b), max(a, b)
+    if orientation == "landscape":
+        return ph, pw
+    if orientation == "square":
+        s = _snap(math.sqrt(pw * ph))
+        return s, s
+    return pw, ph

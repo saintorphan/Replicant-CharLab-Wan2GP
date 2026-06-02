@@ -155,9 +155,9 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
     poses_state = gr.State({"poses": list(_ip.get("poses.pose_gallery", [])),
                             "specs": list(_ip.get("poses.specs", []))})
 
-    sw, sh = settings["width"], settings["height"]
-    nav_outputs = groups + rail + [back_btn, next_btn, step, sw, sh]
-    _PORTRAIT_STEPS = {1, 3}  # ② Base Gen and ④ Touch Up — forced portrait + locked dims
+    # Resolution is a single locked dropdown now (portrait base, auto-oriented per
+    # pose), so the old per-step width/height forcing is gone.
+    nav_outputs = groups + rail + [back_btn, next_btn, step]
 
     def _set_step(target: int):
         target = max(0, min(_N - 1, int(target)))
@@ -166,11 +166,6 @@ def build_wizard(model_choices=None, lora_choices=None, init=None):
         updates += [gr.update(interactive=(target > 0)),
                     gr.update(interactive=(target < _N - 1)),
                     target]
-        if target in _PORTRAIT_STEPS:  # full-body portrait, dims locked
-            updates += [gr.update(value=832, interactive=False),
-                        gr.update(value=1216, interactive=False)]
-        else:
-            updates += [gr.update(interactive=True), gr.update(interactive=True)]
         return updates
 
     reference = comps["setup"]["reference_image"]
@@ -224,7 +219,7 @@ _PERSIST_SPEC = {
     "setup": ["name", "description", "style", "positive_prompt", "negative_prompt"],
     "base": ["count", "denoise"],
     "settings": ["model", "sampler", "scheduler", "steps", "cfg_scale", "clip_skip",
-                 "seed", "width", "height", "loras", "lora_multipliers"],
+                 "seed", "resolution", "loras", "lora_multipliers"],
     "swap": ["face_enhancer", "face_enhancer_strength", "face_blend_ratio",
              "face_adetailer", "face_adet_pos", "face_adet_neg",
              "body_ip_scale", "body_denoise", "body_cfg", "body_cn_strength",
@@ -410,7 +405,7 @@ def _wire_load_save(comps, settings, poses_state):
                     prm["positive_prompt"], prm["negative_prompt"],
                     info["reference_image"], base["selected_base"],
                     settings["steps"], settings["cfg_scale"], settings["seed"],
-                    settings["width"], settings["height"],
+                    settings["resolution"],
                     settings["sampler"], settings["scheduler"], settings["clip_skip"],
                     settings["loras"], settings["lora_multipliers"]]
 
@@ -418,9 +413,10 @@ def _wire_load_save(comps, settings, poses_state):
         if not sel:
             return [gr.update()] * len(load_outputs)
         cs = character.load_character(paths.character_dir(sel))
+        pw, ph = min(cs.width, cs.height), max(cs.width, cs.height)  # portrait base
         return [cs.name, cs.description, cs.style, cs.positive_prompt, cs.negative_prompt,
                 cs.reference_image or None, cs.selected_base or None,
-                cs.steps, cs.cfg_scale, cs.seed, cs.width, cs.height,
+                cs.steps, cs.cfg_scale, cs.seed, f"{pw}x{ph}",
                 cs.sampler or "default", cs.scheduler or "", int(cs.clip_skip),
                 list(cs.selected_loras or []), cs.lora_multipliers or ""]
 
@@ -438,18 +434,23 @@ def _wire_load_save(comps, settings, poses_state):
                    info["reference_image"], base["selected_base"],
                    swap["face_source"], swap["body_source"],
                    settings["steps"], settings["cfg_scale"], settings["seed"],
-                   settings["width"], settings["height"],
+                   settings["resolution"],
                    settings["sampler"], settings["scheduler"], settings["clip_skip"],
                    settings["loras"], settings["lora_multipliers"],
                    poses_state]
 
     def _save(name, desc, style, pos, neg, ref, sbase, face_src, body_src,
-              steps, cfg, seed, width, height, sampler, scheduler, clip_skip,
+              steps, cfg, seed, resolution, sampler, scheduler, clip_skip,
               loras, lora_mult, poses_data, progress=gr.Progress()):
         if not (name and name.strip()):
             gr.Warning("Enter a character name first.")
             return "⚠️ Enter a character name first.", gr.update()
         pd = poses_data or {}
+        try:
+            _a, _b = str(resolution).lower().split("x")
+            cw, ch = min(int(_a), int(_b)), max(int(_a), int(_b))  # store portrait base
+        except Exception:
+            cw, ch = 832, 1216
         cs = character.CharacterState(
             name=name, description=desc or "", style=style,
             positive_prompt=pos or "", negative_prompt=neg or "",
@@ -459,7 +460,7 @@ def _wire_load_save(comps, settings, poses_state):
             approved_poses=list(pd.get("poses", [])),
             approved_pose_specs=list(pd.get("specs", [])),
             steps=int(steps), cfg_scale=float(cfg), seed=int(seed),
-            width=int(width), height=int(height),
+            width=int(cw), height=int(ch),
             sampler=sampler or "", scheduler=scheduler or "", clip_skip=int(clip_skip),
             selected_loras=list(loras or []), lora_multipliers=lora_mult or "")
         cdir = paths.character_dir(name)

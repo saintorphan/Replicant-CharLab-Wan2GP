@@ -14,7 +14,7 @@ class PoseSpec:
     description: str
     distance: str                    # "close" | "medium" | "full"
     angle: str                       # "front" | "three_quarter" | "side" | "back"
-    orientation: str = "portrait"    # "portrait" | "landscape"
+    orientation: str = "portrait"    # "portrait" | "square" (sitting) | "landscape"
 
 
 POSES: list[PoseSpec] = [
@@ -25,10 +25,10 @@ POSES: list[PoseSpec] = [
     PoseSpec("full body shot, standing back view from behind, feet visible, head to toe, wide shot", "full", "back"),
     PoseSpec("full body shot, standing, hands on hips, confident, feet visible, head to toe, wide shot", "full", "front"),
     PoseSpec("full body shot, walking forward dynamic stride, feet visible, head to toe, wide shot", "full", "front"),
-    PoseSpec("full body shot, sitting in a chair front view, hands on lap, legs visible, wide framing", "full", "front"),
-    PoseSpec("full body shot, sitting in a chair three-quarter view, legs crossed, whole body visible, wide framing", "full", "three_quarter"),
-    PoseSpec("full body shot, sitting cross-legged on the ground, casual pose, whole body visible, wide framing", "full", "front"),
-    PoseSpec("full body shot, kneeling, upright posture, whole body visible, wide framing", "full", "three_quarter"),
+    PoseSpec("full body shot, sitting in a chair front view, hands on lap, legs visible, wide framing", "full", "front", "square"),
+    PoseSpec("full body shot, sitting in a chair three-quarter view, legs crossed, whole body visible, wide framing", "full", "three_quarter", "square"),
+    PoseSpec("full body shot, sitting cross-legged on the ground, casual pose, whole body visible, wide framing", "full", "front", "square"),
+    PoseSpec("full body shot, kneeling, upright posture, whole body visible, wide framing", "full", "three_quarter", "square"),
     PoseSpec("full body shot, reclining on a sofa, leaning back, one arm resting, entire body in frame", "full", "side", "landscape"),
     PoseSpec("full body shot, laying on side, head resting on arm, peaceful, entire body in frame", "full", "side", "landscape"),
     # Medium / waist-up — varied angles

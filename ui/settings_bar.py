@@ -30,8 +30,14 @@ def build_settings_bar(model_choices=None, lora_choices=None):
             c["clip_skip"] = gr.Slider(1, 4, value=2, step=1, label="Clip skip")
             c["seed"] = gr.Number(value=-1, label="Seed (-1=random)", precision=0)
         with gr.Row():
-            c["width"] = gr.Slider(256, 2048, value=832, step=64, label="Width")
-            c["height"] = gr.Slider(256, 2048, value=1216, step=64, label="Height")
+            # Resolution is LOCKED to the model family's trained portrait aspect —
+            # you pick a size tier, not free W×H (poses auto-orient: portrait /
+            # square for sitting / landscape for reclining). Choices + default are
+            # repopulated per model by the plugin's _on_model handler.
+            c["resolution"] = gr.Dropdown(
+                label="Resolution (portrait base — model-recommended, aspect locked)",
+                choices=[("832×1216 — recommended", "832x1216")],
+                value="832x1216", scale=2)
         with gr.Row():
             c["loras"] = gr.Dropdown(label="LoRAs", multiselect=True,
                                      choices=lora_choices or [], scale=3)
