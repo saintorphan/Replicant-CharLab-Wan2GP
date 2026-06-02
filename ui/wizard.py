@@ -329,15 +329,8 @@ def _wire_persistence(comps, settings, poses_state, init):
             wizard_state.save(d)
         gal.change(_save_gal, inputs=[gal], outputs=[])
 
-    # --- pose gallery (+ specs from poses_state) ---
-    pgal = comps.get("poses", {}).get("pose_gallery")
-    if pgal is not None:
-        def _save_poses(vals, pstate):
-            d = wizard_state.load()
-            d["poses.pose_gallery"] = _stable_gallery(vals, sub="poses", prefix="pose")
-            d["poses.specs"] = (pstate or {}).get("specs", [])
-            wizard_state.save(d)
-        pgal.change(_save_poses, inputs=[pgal, poses_state], outputs=[])
+    # Pose images persist via the plugin's _persist_poses; here we just clear them.
+    pose_imgs = comps.get("poses", {}).get("pose_imgs") or []
 
     # --- Clear Wizard (form reset) + Clear Cache (delete files), both confirmed ---
     su = comps["setup"]
@@ -345,7 +338,7 @@ def _wire_persistence(comps, settings, poses_state, init):
     if clear_btn is not None:
         import shutil
         clear_outputs = (fields + img_comps + ([gal] if gal is not None else [])
-                         + ([pgal] if pgal is not None else []) + [poses_state])
+                         + list(pose_imgs) + [poses_state])
         ccr, ccb = su["clear_confirm_row"], su["clear_confirm_btns"]
         kar, kab = su["cache_confirm_row"], su["cache_confirm_btns"]
 
@@ -353,7 +346,7 @@ def _wire_persistence(comps, settings, poses_state, init):
             wizard_state.clear()  # reset the form state only
             return ([defaults[k] for k in keys]
                     + [None] * len(img_comps) + ([None] if gal is not None else [])
-                    + ([None] if pgal is not None else [])
+                    + [None] * len(pose_imgs)
                     + [{"poses": [], "specs": []}]
                     + [gr.update(visible=False), gr.update(visible=False)])
 

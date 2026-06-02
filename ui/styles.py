@@ -60,9 +60,6 @@ button.replicant-tabbtn {
     display: flex !important; flex-wrap: nowrap !important; }
 #replicant-inpaint-out .thumbnail-item { flex: 0 0 auto !important; height: 600px !important;
     width: auto !important; }
-/* Replicate: pose gallery scrolls vertically to reach all poses. */
-#replicant-pose-out { max-height: 760px; }
-#replicant-pose-out .grid-wrap { max-height: 760px; overflow-y: auto !important; }
 
 .replicant-step { border: 1px solid var(--border-color-primary);
     border-radius: 10px; padding: 16px; background: var(--background-fill-secondary); }

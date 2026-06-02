@@ -31,44 +31,6 @@ PLUGIN_NAME = "Replicant Character Lab"
 # Draw a colored status badge in each pose thumbnail's corner from the state array
 # (none=grey / approve=green ✓ / regen=red ✗). gr.Gallery has no per-item overlay API,
 # so we paint it in the DOM; pointer-events:none keeps clicks reaching the thumbnail.
-# Push the current selection states to the persistent badge drawer (defined by the
-# boot script below) and repaint.
-_POSE_BADGE_JS = ("(states)=>{window._repPoseStates=states||[];"
-                  "if(window.repDrawBadges)window.repDrawBadges();return states;}")
-
-# Persistent boot: defines window.repDrawBadges (paints a clickable corner badge on
-# every pose thumbnail, click writes "<index>:<ts>" to the hidden relay) and a
-# MutationObserver so badges appear whenever the gallery renders — including on reload,
-# where no .change fires. Injected via <img onerror> (gr.HTML doesn't run <script>).
-_POSE_BADGE_BOOT = (
-    "<img src=x style='display:none' onerror=\"(function(){"
-    "if(window._repBadgeInit)return; window._repBadgeInit=true;"
-    "window._repPoseStates=window._repPoseStates||[];"
-    "window.repDrawBadges=function(){"
-    "var root=document.querySelector('#replicant-pose-out'); if(!root)return;"
-    "root.querySelectorAll('.thumbnail-item').forEach(function(el,i){"
-    "el.style.position='relative';"
-    "var b=el.querySelector('.rep-badge');"
-    "if(!b){b=document.createElement('div');b.className='rep-badge';"
-    "b.style.cssText='position:absolute;bottom:8px;right:8px;width:30px;height:30px;"
-    "border-radius:50%;display:flex;align-items:center;justify-content:center;"
-    "font-weight:700;font-size:18px;color:#fff;z-index:20;cursor:pointer;"
-    "border:2px solid #fff;box-shadow:0 0 5px rgba(0,0,0,.8);';"
-    "el.appendChild(b);"
-    "b.addEventListener('click',function(e){e.stopPropagation();e.preventDefault();"
-    "var bx=document.querySelector('#replicant-pose-click textarea')"
-    "||document.querySelector('#replicant-pose-click input');"
-    "if(bx){bx.value=i+':'+Date.now();bx.dispatchEvent(new Event('input',{bubbles:true}));}"
-    "},true);}"
-    "var s=(window._repPoseStates&&window._repPoseStates[i])||'none';"
-    "if(s==='approve'){b.style.background='#22c55e';b.textContent='\\u2713';}"
-    "else if(s==='regen'){b.style.background='#ef4444';b.textContent='\\u2717';}"
-    "else{b.style.background='rgba(120,120,120,.85)';b.textContent='\\u2022';}"
-    "});};"
-    "new MutationObserver(function(){window.repDrawBadges();})"
-    ".observe(document.body,{childList:true,subtree:true});"
-    "setInterval(function(){window.repDrawBadges();},1200);"
-    "})()\">")
 
 
 class ReplicantCharLab(WAN2GPPlugin):
@@ -167,8 +129,6 @@ class ReplicantCharLab(WAN2GPPlugin):
             "mark();new MutationObserver(mark).observe(document.body,"
             "{childList:true,subtree:true});})()\">",
             elem_classes="replicant-hidden")
-        # Persistent pose-badge drawer (clickable corner badges on the pose gallery).
-        gr.HTML(_POSE_BADGE_BOOT, elem_classes="replicant-hidden")
         with gr.Column(elem_id="replicant-root"):
             ui = wizard.build_wizard(model_choices=model_choices, lora_choices=lora_choices,
                                      init=init)
@@ -235,6 +195,8 @@ class ReplicantCharLab(WAN2GPPlugin):
             bodied = []
             for i, (img, spec) in enumerate(items):
                 final = img
+                if img is None:
+                    bodied.append((None, spec)); continue
                 progress((i, len(items)), desc=f"Body double {i + 1}/{len(items)}")
                 try:
                     if self.acquire_gpu(state):
@@ -255,7 +217,7 @@ class ReplicantCharLab(WAN2GPPlugin):
         fp = self._face_pipe() if apply_face else None
         for i, (img, spec) in enumerate(items):
             final = img
-            if apply_face:
+            if apply_face and img is not None:
                 progress((i, len(items)), desc=f"Applying face {i + 1}/{len(items)}")
                 try:
                     if self.acquire_gpu(state):
@@ -270,6 +232,30 @@ class ReplicantCharLab(WAN2GPPlugin):
             gallery.append(final); specs.append(spec)
         self._release_faceswap()  # leave the GPU clean for Save / Train
         return gallery, specs
+
+    def _persist_poses(self, gallery, specs):
+        """Copy poses to the stable persist dir + save list/specs to wizard state so
+        they survive an app reload. Returns the persisted paths (None preserved)."""
+        import os
+        import shutil
+        from .core import wizard_state
+        d = paths.cache_dir() / "persist" / "poses"
+        shutil.rmtree(d, ignore_errors=True); d.mkdir(parents=True, exist_ok=True)
+        out = []
+        for i, p in enumerate(gallery):
+            if p and isinstance(p, str) and os.path.isfile(p):
+                dst = d / f"pose_{i:02d}.png"
+                try:
+                    shutil.copy2(p, dst); out.append(str(dst))
+                except Exception:
+                    out.append(p)
+            else:
+                out.append(None)
+        st = wizard_state.load()
+        st["poses.pose_gallery"] = out
+        st["poses.specs"] = specs
+        wizard_state.save(st)
+        return out
 
     def _wire_generation(self, ui):
         c, s = ui["components"], ui["settings"]
@@ -740,46 +726,33 @@ class ReplicantCharLab(WAN2GPPlugin):
                              "orientation": ps.orientation}))
 
             out = paths.cache_dir() / "poses"
-            imgs = [(img, spec) for img, spec in raw if img]
+            # Keep all N slots aligned (None for any that failed to generate).
             gallery, specs = self._pose_swaps(
-                state, ident, imgs, pos, neg, do_body, body_src, body_ip_scale,
+                state, ident, raw, pos, neg, do_body, body_src, body_ip_scale,
                 body_denoise, apply_face, face_src, out, progress)
-            if not gallery:
+            if not any(gallery):
                 raise gr.Error("No poses were generated.")
-            return gallery, {"poses": gallery, "specs": specs}, ["none"] * len(gallery)
+            saved = self._persist_poses(gallery, specs)
+            return saved + [{"poses": saved, "specs": specs}]
 
         pose_in = [self.state] + SET + [prm["positive_prompt"], prm["negative_prompt"],
                                         base["selected_base"], pose["face_mode"],
                                         pose["body_mode"], swap["face_source"],
                                         swap["body_source"], swap["body_ip_scale"],
                                         swap["body_denoise"]]
-        pose_out = [pose["pose_gallery"], ui["poses_state"], pose["pose_select"]]
+        pose_out = pose["pose_imgs"] + [ui["poses_state"]]
         pose["generate"].click(_gen_poses, inputs=pose_in, outputs=pose_out)
 
-        # Clicking a pose's corner badge cycles its state: none -> approve -> regen.
-        # The badge JS writes "<index>:<ts>" into the hidden relay; we cycle here.
-        def _cycle(states, val):
-            if not val or ":" not in val:
-                return states
-            i = int(val.split(":")[0])
-            states = list(states or [])
-            while len(states) <= i:
-                states.append("none")
-            states[i] = {"none": "approve", "approve": "regen",
-                         "regen": "none"}.get(states[i], "approve")
-            return states
-        pose["pose_click"].change(_cycle, inputs=[pose["pose_select"], pose["pose_click"]],
-                                  outputs=[pose["pose_select"]])
-        # Redraw the corner badges whenever the selection state changes.
-        pose["pose_select"].change(lambda s: None, inputs=[pose["pose_select"]],
-                                   outputs=None, js=_POSE_BADGE_JS)
+        _N = len(poses.POSES)
 
         def _rerun_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
                          width, height, pos, neg, sel_base, face_mode, body_mode,
-                         face_ref, body_ref, body_ip_scale, body_denoise,
-                         gallery, pstate, sel, progress=gr.Progress()):
-            cur = [g[0] if isinstance(g, (list, tuple)) else g for g in (gallery or [])]
-            if not cur:
+                         face_ref, body_ref, body_ip_scale, body_denoise, *rest,
+                         progress=gr.Progress()):
+            cur = list(rest[:_N])
+            choices = list(rest[_N:2 * _N])
+            pstate = rest[2 * _N] if len(rest) > 2 * _N else {}
+            if not any(cur):
                 raise gr.Error("Generate poses first.")
             backend, ident = discovery.parse_model_value(model)
             face_src = sel_base if face_mode == "Use Base" else (
@@ -793,16 +766,16 @@ class ReplicantCharLab(WAN2GPPlugin):
             if apply_face:
                 self._require(["inswapper_128", "buffalo_l"], "Pose face swap")
             specs = (pstate or {}).get("specs", [])
-            sel = list(sel or [])
             P = poses.POSES
             final = list(cur)
             to_swap = []  # (orig_index, new_base_img, spec)
             for i, img in enumerate(cur):
-                st = sel[i] if i < len(sel) else "none"
-                if st == "approve":
-                    continue  # keep as-is (already swapped)
+                choice = choices[i] if i < len(choices) else "Approve"
+                if choice == "Approve" or not img:
+                    continue  # keep as-is (already swapped) / nothing to reroll
                 spec = specs[i] if i < len(specs) else \
-                    {"distance": "full", "angle": "front", "orientation": "portrait"}
+                    (P[i].__dict__ if i < len(P) else
+                     {"distance": "full", "angle": "front", "orientation": "portrait"})
                 desc = next((p.description for p in P if p.distance == spec.get("distance")
                              and p.angle == spec.get("angle")), "")
                 p_pos = f"{pos}, {desc}" if desc else pos
@@ -811,11 +784,11 @@ class ReplicantCharLab(WAN2GPPlugin):
                     if spec.get("orientation") == "landscape" \
                     else (min(width, height), max(width, height))
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
-                if st == "regen":  # fresh txt2img
+                if choice == "Regenerate":  # fresh txt2img
                     imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps,
                                            cfg, sd, sampler, scheduler, clip_skip)
                     new = imgs[0] if imgs else img
-                elif backend == "sd":  # "none" → img2img from itself (fixed CFG 30 / 15 steps)
+                elif backend == "sd":  # Reroll (img2img) from itself — fixed CFG 30 / 15 steps
                     gen_sd.release_sd(); self._release_faceswap()
                     if self.acquire_gpu(state):
                         try:
@@ -840,12 +813,12 @@ class ReplicantCharLab(WAN2GPPlugin):
                     progress, start_idx=1000)
                 for (oi, _, _), sw in zip(to_swap, swapped):
                     final[oi] = sw
-            return final, {"poses": final, "specs": specs[:len(final)]}, \
-                ["none"] * len(final)
+            saved = self._persist_poses(final, specs)
+            return saved + [{"poses": saved, "specs": specs}]
 
         pose["rerun"].click(
             _rerun_poses,
-            inputs=pose_in + [pose["pose_gallery"], ui["poses_state"], pose["pose_select"]],
+            inputs=pose_in + pose["pose_imgs"] + pose["pose_choices"] + [ui["poses_state"]],
             outputs=pose_out)
 
         # "Use Reference" is only offered when a face/body reference exists on Human Clone.

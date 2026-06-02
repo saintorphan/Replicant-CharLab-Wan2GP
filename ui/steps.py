@@ -10,6 +10,8 @@ the ported SupremeDiffusion helpers.
 """
 from __future__ import annotations
 
+import os
+
 import gradio as gr
 
 from ..core import paths, poses
@@ -286,9 +288,9 @@ def build_inpaint(visible: bool, init=None, lora_choices=None):
 def build_poses(visible: bool, init=None):
     with gr.Group(visible=visible, elem_classes="replicant-step") as g:
         gr.Markdown("### ⑤ Replicate")
-        gr.Markdown(f"<sub>{len(poses.POSES)} predefined poses (full / medium / close, "
-                    "varied angles). The base face is applied to each for identity "
-                    "consistency, then you approve the keepers.</sub>")
+        n = len(poses.POSES)
+        gr.Markdown(f"<sub>{n} predefined poses (full / medium / close, varied angles). "
+                    "Generate, then set each pose's dropdown and **Re-run poses**.</sub>")
         c = {}
         face_ref = bool(_init_img(init, "swap.face_source"))
         body_ref = bool(_init_img(init, "swap.body_source"))
@@ -303,19 +305,25 @@ def build_poses(visible: bool, init=None):
                 value="None", label="Body double")
         with gr.Row():
             c["generate"] = gr.Button("Generate poses", variant="primary")
-            c["rerun"] = gr.Button("↻ Re-run poses (apply selections)", variant="primary")
-        gr.Markdown("<sub>Click a pose to cycle its corner badge: **grey** = re-roll as "
-                    "img2img from itself · **green ✓** = approve (keep) · **red ✗** = "
-                    "fully regenerate. Then **Re-run poses**.</sub>")
-        c["pose_gallery"] = gr.Gallery(label="Poses", columns=4,
-                                       height=760, object_fit="contain",
-                                       show_fullscreen_button=True,
-                                       elem_id="replicant-pose-out",
-                                       value=_init_gallery(init, "poses.pose_gallery"))
-        c["pose_select"] = gr.State([])  # per-pose: "none" | "approve" | "regen"
-        # Hidden relay: the badge's JS click writes "<index>:<ts>" here; Python cycles.
-        c["pose_click"] = gr.Textbox(value="", elem_id="replicant-pose-click",
-                                     elem_classes="replicant-hidden")
+            c["rerun"] = gr.Button("↻ Re-run poses (apply dropdowns)", variant="primary")
+        gr.Markdown("<sub>Per pose: **Approve** keeps it · **Reroll (img2img)** re-rolls "
+                    "from itself · **Regenerate** makes a fresh one.</sub>")
+        # Fixed grid: one (image + dropdown) slot per pose.
+        saved = (init or {}).get("poses.pose_gallery") or []
+        c["pose_imgs"], c["pose_choices"] = [], []
+        for r in range(0, n, 4):
+            with gr.Row():
+                for idx in range(r, min(r + 4, n)):
+                    with gr.Column(scale=1, min_width=180):
+                        img = gr.Image(type="filepath", height=300, interactive=False,
+                                       show_label=False, show_fullscreen_button=True,
+                                       value=(saved[idx] if idx < len(saved) and
+                                              os.path.isfile(str(saved[idx])) else None))
+                        dd = gr.Dropdown(["Approve", "Reroll (img2img)", "Regenerate"],
+                                         value="Reroll (img2img)", container=False,
+                                         show_label=False)
+                        c["pose_imgs"].append(img)
+                        c["pose_choices"].append(dd)
     return g, c
 
 
