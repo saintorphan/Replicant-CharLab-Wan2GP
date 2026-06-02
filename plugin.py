@@ -786,26 +786,28 @@ class ReplicantCharLab(WAN2GPPlugin):
                     if spec.get("orientation") == "landscape" \
                     else (min(width, height), max(width, height))
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
-                if choice == "Regenerate":  # fresh txt2img
+                img2img = choice in ("Cohesion (img2img)", "Re-Roll (img2img)")
+                if choice == "Regenerate (txt2img)" or (img2img and backend != "sd"):
+                    # fresh txt2img (also the fallback when a native model can't img2img)
                     imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps,
                                            cfg, sd, sampler, scheduler, clip_skip)
                     new = imgs[0] if imgs else img
-                elif backend == "sd":  # Reroll (img2img) from itself — fixed CFG 30 / 15 steps
+                else:  # SD img2img — Cohesion = gentle low-CFG; Re-Roll = heavier
+                    if choice == "Cohesion (img2img)":
+                        i2i_cfg, i2i_steps, i2i_den = 0.22, 14, 0.35
+                    else:  # Re-Roll
+                        i2i_cfg, i2i_steps, i2i_den = float(cfg), 24, 0.6
                     gen_sd.release_sd(); self._release_faceswap()
                     if self.acquire_gpu(state):
                         try:
                             outs = gen_sd.generate_img2img(
-                                ident, img, p_pos, p_neg, pw, ph, 15,
-                                30.0, sd, denoise=0.5, clip_skip=int(clip_skip))
+                                ident, img, p_pos, p_neg, pw, ph, i2i_steps,
+                                i2i_cfg, sd, denoise=i2i_den, clip_skip=int(clip_skip))
                         finally:
                             self.release_gpu(state)
                         new = outs[0] if outs else img
                     else:
                         new = img
-                else:  # native: no img2img path → regen
-                    imgs = self._gen_image(state, model, p_pos, p_neg, pw, ph, steps,
-                                           cfg, sd, sampler, scheduler, clip_skip)
-                    new = imgs[0] if imgs else img
                 to_swap.append((i, new, spec))
             if to_swap:
                 items = [(im, sp) for (_, im, sp) in to_swap]
