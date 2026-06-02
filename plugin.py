@@ -606,12 +606,15 @@ class ReplicantCharLab(WAN2GPPlugin):
 
         # -- step 6: pose variants (+ mandatory base-face swap) --
         def _gen_poses(state, model, sampler, scheduler, steps, cfg, clip_skip, seed,
-                       width, height, pos, neg, sel_base, progress=gr.Progress()):
+                       width, height, pos, neg, sel_base, apply_face,
+                       progress=gr.Progress()):
             if not sel_base:
                 raise gr.Error("Generate/select a base image first (step 3).")
             if not (pos and pos.strip()):
                 raise gr.Error("Need a positive prompt (step 2).")
-            self._require(["inswapper_128", "buffalo_l"], "Pose generation (base-face swap)")
+            if apply_face:
+                self._require(["inswapper_128", "buffalo_l"],
+                              "Pose generation (base-face swap)")
             P = poses.POSES
 
             # Pass 1 — generate every pose with ONLY the generator resident
@@ -631,29 +634,30 @@ class ReplicantCharLab(WAN2GPPlugin):
                             {"distance": ps.distance, "angle": ps.angle,
                              "orientation": ps.orientation}))
 
-            # Pass 2 — free the generator, then apply the base face to each pose
-            # (only the swap models resident now). Never both families at once.
+            # Pass 2 — free the generator, then (optionally) apply the base face to
+            # each pose (only the swap models resident now). Never both families at once.
             gen_sd.release_sd()
-            fp = self._face_pipe()
             out = paths.cache_dir() / "poses"
             out.mkdir(parents=True, exist_ok=True)
             gallery, specs = [], []
+            fp = self._face_pipe() if apply_face else None
             for i, (img, spec) in enumerate(raw):
                 if not img:
                     continue
                 final = img
-                progress((i, len(raw)), desc=f"Applying base face {i + 1}/{len(raw)}")
-                try:
-                    if self.acquire_gpu(state):
-                        try:
-                            swapped = fp.swap(source_path=sel_base, target_path=img)
-                            fp_path = out / f"pose_{i + 1:03d}.png"
-                            swapped.save(fp_path)
-                            final = str(fp_path)
-                        finally:
-                            self.release_gpu(state)
-                except Exception:
-                    traceback.print_exc()
+                if apply_face:
+                    progress((i, len(raw)), desc=f"Applying base face {i + 1}/{len(raw)}")
+                    try:
+                        if self.acquire_gpu(state):
+                            try:
+                                swapped = fp.swap(source_path=sel_base, target_path=img)
+                                fp_path = out / f"pose_{i + 1:03d}.png"
+                                swapped.save(fp_path)
+                                final = str(fp_path)
+                            finally:
+                                self.release_gpu(state)
+                    except Exception:
+                        traceback.print_exc()
                 gallery.append(final)
                 specs.append(spec)
 
@@ -665,7 +669,7 @@ class ReplicantCharLab(WAN2GPPlugin):
         pose["generate"].click(
             _gen_poses,
             inputs=[self.state] + SET + [prm["positive_prompt"], prm["negative_prompt"],
-                                         base["selected_base"]],
+                                         base["selected_base"], pose["apply_face_to_poses"]],
             outputs=[pose["pose_gallery"], ui["poses_state"]])
 
     def _wire_enhancer(self, ui):
