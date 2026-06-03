@@ -1365,6 +1365,38 @@ class ReplicantCharLab(WAN2GPPlugin):
                       inputs=[pose["pose_prev"], ui["poses_state"]],
                       outputs=[pose["pose_imgs"][_i], ui["poses_state"]])
 
+        # -- Replicate base thumbnail: mirrors the current base; ➕ on a pose sets it
+        # as the new base (saving the old one), and ↩ Undo base reverts that. --
+        base_thumb = pose.get("pose_base_thumb")
+        base_prev = pose.get("pose_base_prev")
+        if base_thumb is not None:
+            # Keep the thumbnail in sync whenever the base changes (anywhere).
+            base["selected_base"].change(lambda b: b or None,
+                                         inputs=[base["selected_base"]],
+                                         outputs=[base_thumb])
+
+            def _set_as_base(pose_path, cur_base):
+                if not pose_path:
+                    gr.Warning("That pose slot is empty.")
+                    return gr.update(), gr.update()
+                gr.Info("Set as base. Use ↩ Undo base to revert.")
+                return pose_path, cur_base  # selected_base ← pose, prev ← old base
+
+            for _i, _sb in enumerate(pose["pose_setbase"]):
+                _sb.click(_set_as_base,
+                          inputs=[pose["pose_imgs"][_i], base["selected_base"]],
+                          outputs=[base["selected_base"], base_prev])
+
+            def _undo_base(prev):
+                if not prev:
+                    gr.Info("No previous base to revert to.")
+                    return gr.update()
+                return prev  # selected_base ← previous (thumb follows via .change)
+
+            if pose.get("pose_base_undo") is not None:
+                pose["pose_base_undo"].click(_undo_base, inputs=[base_prev],
+                                             outputs=[base["selected_base"]])
+
         # "Use Reference" is only offered when a face/body reference exists on Human Clone.
         def _ref_opts(src, base):
             opts = ["None", "Use Base"] + (["Use Reference"] if src else [])

@@ -64,4 +64,12 @@ button.replicant-tabbtn {
 .replicant-step { border: 1px solid var(--border-color-primary);
     border-radius: 10px; padding: 16px; background: var(--background-fill-secondary); }
 .replicant-step h3 { margin-top: 0; }
+
+/* Per-pose "Set as Base" (➕) — CSS hover tooltip. */
+.replicant-pose-setbase { position: relative; overflow: visible !important; }
+.replicant-pose-setbase:hover::after {
+    content: "Set as Base"; position: absolute; bottom: calc(100% + 4px); left: 50%;
+    transform: translateX(-50%); background: #222; color: #fff; padding: 2px 7px;
+    border-radius: 4px; font-size: 11px; line-height: 1.4; white-space: nowrap;
+    z-index: 60; pointer-events: none; box-shadow: 0 1px 4px rgba(0,0,0,0.4); }
 """
