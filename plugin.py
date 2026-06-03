@@ -7,10 +7,13 @@ SupremeDiffusion's PySide6 character creator into Wan2GP's Gradio UI.
 NOTE: not an official plugin. Distribute via the plugin-manager "add from GitHub
 URL" flow; do not add to the bundled plugins.json without dbm's approval.
 """
+import logging
 import random as _rng
 import traceback
 
 import gradio as gr
+
+logger = logging.getLogger("replicant.plugin")
 
 from shared.utils.plugins import WAN2GPPlugin
 
@@ -518,6 +521,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 res.append((final, spec))
             return res
 
+        body_ok = body_fail = 0
         if do_body:
             gen_sd.release_sd(); self._release_faceswap()
             bodied = []
@@ -534,9 +538,17 @@ class ReplicantCharLab(WAN2GPPlugin):
                                                  denoise=float(body_den),
                                                  adetailer=False, progress=progress)
                             final = r or img
+                            if r:
+                                body_ok += 1
+                            else:  # None = aborted/segfail → original kept, no change
+                                body_fail += 1
+                                logger.warning("Body double pose %d: no result, kept "
+                                               "original (aborted or seg failed).", i + 1)
                         finally:
                             self.release_gpu(state)
                 except Exception:
+                    body_fail += 1
+                    logger.warning("Body double pose %d FAILED; kept original.", i + 1)
                     traceback.print_exc()
                 bodied.append((final, spec))
             items = bodied
@@ -547,6 +559,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                                "Body ADetailer")
         gen_sd.release_sd()
         gallery, specs = [], []
+        face_ok = face_noface = face_fail = 0
         fp = self._face_pipe() if apply_face else None
         for i, (img, spec) in enumerate(items):
             final = img
@@ -558,12 +571,38 @@ class ReplicantCharLab(WAN2GPPlugin):
                             swapped = fp.swap(source_path=face_src, target_path=img)
                             fp_path = out / f"pose_{start_idx + i + 1:03d}.png"
                             swapped.save(fp_path); final = str(fp_path)
+                            face_ok += 1
                         finally:
                             self.release_gpu(state)
+                except ValueError as e:  # "No face detected in target/source image"
+                    if "No face detected" in str(e):
+                        face_noface += 1
+                        logger.warning("Face swap pose %d skipped: %s", i + 1, e)
+                    else:
+                        face_fail += 1
+                        traceback.print_exc()
                 except Exception:
+                    face_fail += 1
                     traceback.print_exc()
             gallery.append(final); specs.append(spec)
         self._release_faceswap()
+        # Summary so both passes are observable (also in the terminal log).
+        n = sum(1 for im, _ in items if im is not None)
+        parts = []
+        if do_body:
+            parts.append(f"body double {body_ok}/{n}"
+                         + (f" ({body_fail} kept original)" if body_fail else ""))
+        if apply_face:
+            parts.append(f"face swap {face_ok}/{n}"
+                         + (f" ({face_noface} no-face skips)" if face_noface else "")
+                         + (f" ({face_fail} errors)" if face_fail else ""))
+        if parts:
+            msg = "Replicate passes — " + "; ".join(parts) + "."
+            logger.info(msg)
+            try:
+                gr.Info(msg)
+            except Exception:
+                pass
         # Face ADetailer (face model) — after the face swap.
         if ad.get("face"):
             gen_sd.release_sd()
@@ -1235,7 +1274,21 @@ class ReplicantCharLab(WAN2GPPlugin):
         for _i, _btn in enumerate(pose["pose_abort"]):
             _btn.click(_make_pose_abort(_i), None, None)
 
-        pose["generate"].click(_gen_poses, inputs=pose_in, outputs=pose_out)
+        # Grey out ALL FOUR gen buttons while any run is in flight, re-enable after.
+        # .then() (not .success()) runs even if the handler errored, so the buttons
+        # never get stuck disabled.
+        gen_btns = [pose["generate"], pose["rerun"],
+                    pose["repass_face"], pose["repass_body"]]
+
+        def _lock_btns():
+            return [gr.update(interactive=False)] * 4
+
+        def _unlock_btns():
+            return [gr.update(interactive=True)] * 4
+
+        pose["generate"].click(_lock_btns, None, gen_btns).then(
+            _gen_poses, inputs=pose_in, outputs=pose_out).then(
+            _unlock_btns, None, gen_btns)
 
         _N = len(poses.POSES)
 
@@ -1376,11 +1429,86 @@ class ReplicantCharLab(WAN2GPPlugin):
             saved = self._persist_poses(final, specs)
             return saved + [{"poses": saved, "specs": specs}, prev_snapshot]
 
-        pose["rerun"].click(
+        pose["rerun"].click(_lock_btns, None, gen_btns).then(
             _rerun_poses,
             inputs=pose_in + pose["pose_imgs"] + pose["pose_choices"] + pose["pose_color"]
             + [ui["poses_state"]],
-            outputs=pose_out + [pose["pose_prev"]])
+            outputs=pose_out + [pose["pose_prev"]]).then(_unlock_btns, None, gen_btns)
+
+        # -- Repass Face / Body on Selected: re-run ONLY that swap pass on the poses
+        # whose "Face/Body Repass" tickbox is on. Unlike Re-run, this ignores the
+        # Approve dropdown — an Approve'd pose CAN be repassed if it's ticked. --
+        def _do_repass(kind, state, model, pos, neg, sel_base, face_mode, body_mode,
+                       face_ref, body_ref, body_ip_scale, body_denoise,
+                       pfa, pfa_pos, pfa_neg, pba, pba_pos, pba_neg, pose_sdxl,
+                       *rest, progress=gr.Progress()):
+            cur = list(rest[:_N])
+            flags = list(rest[_N:2 * _N])  # per-pose repass tickboxes
+            pstate = rest[2 * _N] if len(rest) > 2 * _N else {}
+            sel = [i for i in range(min(_N, len(cur)))
+                   if i < len(flags) and flags[i] and cur[i]]
+            if not sel:
+                raise gr.Error("Tick “Face/Body Repass” on at least one pose first.")
+            backend, ident = discovery.parse_model_value(model)
+            sdxl_ident = ident if backend == "sd" else (pose_sdxl or "")  # see _gen_poses
+            face_src = sel_base if face_mode == "Use Base" else (
+                face_ref if face_mode == "Use Reference" else None)
+            body_src = sel_base if body_mode == "Use Base" else (
+                body_ref if body_mode == "Use Reference" else None)
+            specs = (pstate or {}).get("specs", [])
+            if kind == "face":
+                if not face_src:
+                    raise gr.Error("Set “Face swap” to Use Base/Reference first.")
+                self._require(["inswapper_128", "buffalo_l"], "Face repass")
+                adet = _pose_adet(pfa, pfa_pos, pfa_neg, False, "", "", sdxl_ident)
+                do_body, apply_face = False, True
+            else:  # body
+                if not body_src:
+                    raise gr.Error("Set “Body double” to Use Base/Reference first.")
+                if not sdxl_ident:
+                    raise gr.Error("Pick a “Body-swap / detail model (SDXL)” first.")
+                self._require(models.BODY_SWAP_KEYS, "Body repass")
+                adet = _pose_adet(False, "", "", pba, pba_pos, pba_neg, sdxl_ident)
+                do_body, apply_face = True, False
+            prev_snapshot = self._snapshot_prev(cur)  # for the per-pose ↩ undo
+            gen_sd.clear_abort()
+            items = [(cur[i], (specs[i] if i < len(specs) else {})) for i in sel]
+            # start_idx=2000 keeps repass output filenames clear of generate (1..) and
+            # re-run (1000..), so it never clobbers another slot's file.
+            swapped, _ = self._pose_swaps(
+                state, sdxl_ident, items, pos, neg, do_body, body_src,
+                body_ip_scale, body_denoise, apply_face, face_src,
+                paths.cache_dir() / "poses", progress, start_idx=2000, adet=adet)
+            final = list(cur)
+            for j, i in enumerate(sel):
+                if j < len(swapped) and swapped[j]:
+                    final[i] = swapped[j]
+            saved = self._persist_poses(final, specs)
+            return saved + [{"poses": saved, "specs": specs}, prev_snapshot]
+
+        def _repass_face(*args, progress=gr.Progress()):
+            return _do_repass("face", *args, progress=progress)
+
+        def _repass_body(*args, progress=gr.Progress()):
+            return _do_repass("body", *args, progress=progress)
+
+        repass_in = [self.state, SET[0], prm["positive_prompt"],
+                     prm["negative_prompt"], base["selected_base"], pose["face_mode"],
+                     pose["body_mode"], swap["face_source"], swap["body_source"],
+                     swap["body_ip_scale"], swap["body_denoise"],
+                     pose["pose_face_adet"], pose["pose_face_adet_pos"],
+                     pose["pose_face_adet_neg"], pose["pose_body_adet"],
+                     pose["pose_body_adet_pos"], pose["pose_body_adet_neg"],
+                     pose["pose_sdxl_model"]] + pose["pose_imgs"] \
+            + pose["pose_repass"] + [ui["poses_state"]]
+        repass_out = pose_out + [pose["pose_prev"]]
+
+        pose["repass_face"].click(_lock_btns, None, gen_btns).then(
+            _repass_face, inputs=repass_in, outputs=repass_out).then(
+            _unlock_btns, None, gen_btns)
+        pose["repass_body"].click(_lock_btns, None, gen_btns).then(
+            _repass_body, inputs=repass_in, outputs=repass_out).then(
+            _unlock_btns, None, gen_btns)
 
         # Per-pose ↩ undo: revert one slot to its pre-re-run image (+ sync state +
         # re-persist so the revert survives an app reload).

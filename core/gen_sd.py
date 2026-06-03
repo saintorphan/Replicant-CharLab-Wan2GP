@@ -19,6 +19,13 @@ logger = logging.getLogger("replicant.gen_sd")
 
 # The SD/SDXL pipeline is bundled in ``core/sd`` — no external checkout needed.
 
+# InsightFace detector input size. The default 640 downscales a full-body pose so
+# far the face (~45px) slips under the detection floor — which silently breaks both
+# head exclusion (body-swap then overwrites the head) and the face-swap target.
+# 1024 keeps a full-body face large enough to detect; bump higher if very-wide
+# full-body shots still miss.
+FACE_DET_SIZE = (1024, 1024)
+
 
 def fit_image(image_path, width, height, out_dir=None) -> str:
     """Return a path to ``image_path`` fitted to (width,height) WITHOUT stretching
@@ -486,7 +493,7 @@ def head_excluded_body_mask(base_path, models_root, hair_up=2.0,
         from insightface.app import FaceAnalysis
         app = FaceAnalysis(name="buffalo_l",
                            providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
-        app.prepare(ctx_id=0, det_size=(640, 640))
+        app.prepare(ctx_id=0, det_size=FACE_DET_SIZE)
         faces = app.get(cv2.imread(base_path))
         if faces:
             f = max(faces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
@@ -496,6 +503,18 @@ def head_excluded_body_mask(base_path, models_root, hair_up=2.0,
             hx1, hx2 = max(0, int(x1 - bw * 0.6)), min(W, int(x2 + bw * 0.6))
             hy1, hy2 = max(0, int(y1 - bh * hair_up)), min(H, int(y2 + bh * 0.25))
             mask[hy1:hy2, hx1:hx2] = 0  # exclude the whole head from the inpaint region
+        else:
+            # No face detected — WITHOUT a head box the inpaint would overwrite the
+            # head (mangling it so the later face swap can't find a face). Guard the
+            # head by excluding the top of the person's own bounding region.
+            ys, xs = np.where(mask > 0)
+            if len(ys):
+                py1, py2 = int(ys.min()), int(ys.max())
+                px1, px2 = int(xs.min()), int(xs.max())
+                guard = py1 + int((py2 - py1) * 0.22)  # top ~22% ≈ head + neck
+                mask[py1:guard, px1:px2 + 1] = 0
+            logger.warning("head detection found no face; guarding the top ~22%% of "
+                           "the person instead of excluding a precise head box")
     except Exception:
         logger.warning("head detection failed; inpainting the full person", exc_info=True)
     if exclude_hands:
@@ -582,7 +601,7 @@ def _detect_face_boxes(image_path, threshold=0.4):
         from insightface.app import FaceAnalysis
         app = FaceAnalysis(name="buffalo_l",
                            providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
-        app.prepare(ctx_id=0, det_size=(640, 640))
+        app.prepare(ctx_id=0, det_size=FACE_DET_SIZE)
         boxes = []
         for f in app.get(cv2.imread(image_path)):
             if float(getattr(f, "det_score", 1.0)) < threshold:

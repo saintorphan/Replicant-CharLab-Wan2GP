@@ -161,7 +161,9 @@ class FaceSwapPipeline:
             self._analyser = FaceAnalysis(name="buffalo_l", root=str(root), providers=providers)
         else:
             self._analyser = FaceAnalysis(name="buffalo_l", providers=providers)
-        self._analyser.prepare(ctx_id=0, det_size=(640, 640))
+        # 640 misses the small face in a full-body pose (the swap target), raising
+        # "No face detected in target image". 1024 keeps full-body faces detectable.
+        self._analyser.prepare(ctx_id=0, det_size=(1024, 1024))
         logger.info("Loaded InsightFace buffalo_l analyser")
         return self._analyser
 

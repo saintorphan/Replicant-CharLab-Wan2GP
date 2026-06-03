@@ -345,6 +345,12 @@ def build_poses(visible: bool, init=None):
             c["rerun"] = gr.Button("↻ Re-run poses (apply dropdowns)", variant="primary")
             c["abort_all"] = gr.Button("⛔ Abort all", variant="stop", scale=0,
                                        min_width=120)
+        with gr.Row():
+            c["repass_face"] = gr.Button("Repass Face on Selected")
+            c["repass_body"] = gr.Button("Repass Body on Selected")
+        gr.Markdown("<sub>Tick **Face/Body Repass** on any poses, then **Repass Face / "
+                    "Body on Selected** to re-run just that swap pass on them — works "
+                    "even on **Approve**'d poses (which Re-run leaves untouched).</sub>")
         gr.Markdown("<sub>Per pose: **Approve** keeps it · **Sharpen (no upscale)** = crisp "
                     "the whole image (no model) · **Cohesion (img2img)** = gentle low-CFG "
                     "cleanup · **Re-Roll (img2img)** = heavier re-roll · **Regenerate "
@@ -360,6 +366,7 @@ def build_poses(visible: bool, init=None):
                "Re-Roll (img2img)", "Regenerate (txt2img)"]
         c["pose_imgs"], c["pose_choices"], c["pose_color"] = [], [], []
         c["pose_abort"], c["pose_undo"], c["pose_setbase"] = [], [], []
+        c["pose_repass"] = []  # per-pose "Face/Body Repass" select for the repass buttons
         # Holds the pre-re-run image for each slot so the ↩ button can revert one
         # pose to exactly what it was before the last Re-run.
         c["pose_prev"] = gr.State(list(saved))
@@ -386,9 +393,12 @@ def build_poses(visible: bool, init=None):
                         cm = gr.Checkbox(label="Color match", container=False,
                                          value=(bool(_co[idx]) if idx < len(_co)
                                                 else False))
+                        rp = gr.Checkbox(label="Face/Body Repass", container=False,
+                                         value=False)
                         c["pose_imgs"].append(img)
                         c["pose_choices"].append(dd)
                         c["pose_color"].append(cm)
+                        c["pose_repass"].append(rp)
                         c["pose_setbase"].append(sb)
                         c["pose_undo"].append(un)
                         c["pose_abort"].append(ab)
