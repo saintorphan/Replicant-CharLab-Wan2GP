@@ -338,6 +338,38 @@ class ReplicantCharLab(WAN2GPPlugin):
         portrait (as-is), square 1:1 (sitting), or landscape (reclining/laying)."""
         return presets.oriented(resolution, orientation)
 
+    def _is_square_native(self, model) -> bool:
+        """True for 1:1-trained native models (Z-Image, Flux 2 Klein). They're
+        trained at 1024² square and paint a vertically-stretched 'big head' when
+        forced to portrait — so we render them square instead. Gated on a square
+        (w==h) default resolution too, which leaves the landscape Z-Image *Control*
+        variants (1920x1088) on their own native aspect."""
+        cache = self.__dict__.setdefault("_sqnat_cache", {})
+        if model in cache:
+            return cache[model]
+        try:
+            backend, ident = discovery.parse_model_value(model)
+        except Exception:
+            return False
+        result = False
+        if backend == "native" and ident and any(
+                f in ident for f in ("z_image", "flux2_klein")):
+            try:
+                res = str(self.get_default_settings(ident).get("resolution", ""))
+                w, h = (int(x) for x in res.lower().split("x"))
+                result = (w == h)
+            except Exception:
+                result = True  # these families default square — assume square
+        cache[model] = result
+        return result
+
+    def _orient_for(self, model, orientation):
+        """Force 'square' for 1:1-native models; otherwise honour the pose's
+        orientation (portrait/square/landscape). Applied at every gen entry point
+        so a Z-Image / Flux-2-Klein base, reimagine, pose and re-roll all stay on
+        the model's native square instead of a distorting portrait."""
+        return "square" if self._is_square_native(model) else orientation
+
     def _face_pipe(self):
         if self._faceswap is None:
             self._faceswap = faceswap.FaceSwapPipeline(str(paths.models_dir() / "face"))
@@ -422,10 +454,16 @@ class ReplicantCharLab(WAN2GPPlugin):
                     f"'{model_type}' has no guide-image input, so it can't img2img. "
                     "Use a Flux/Qwen-Image model, a Z-Image *Control* model, or an "
                     "SDXL/Pony/Illustrious checkpoint.")
+            # Fit the guide to the exact target WITHOUT stretching first — Wan2GP
+            # would otherwise resize-stretch a mismatched-aspect guide (e.g. a
+            # portrait fed into a square Z-Image), squashing the subject into a
+            # 'big head' that compounds over a chain of img2img hops and then
+            # confuses the downstream face swap. See gen_sd.fit_image.
+            guide_fit = gen_sd.fit_image(guide_path, w, h) if guide_path else guide_path
             # "VG": V = use the guide image, G = honour denoising_strength (partial
             # denoise). Without "G", wgp forces denoise=1.0 (full regen, ignoring
             # the slider); no "A" so no mask is required → a true img2img.
-            settings.update({"image_guide": guide_path,
+            settings.update({"image_guide": guide_fit,
                              "denoising_strength": float(denoise),
                              "video_prompt_type": "VG"})
         try:
@@ -638,7 +676,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 raise gr.Error("Build or enhance a positive prompt on step 2 first.")
             gen_sd.clear_abort()  # don't inherit a stale abort flag from a prior run
             self._release_faceswap()  # base gen is pure SD — free InsightFace VRAM
-            bw, bh = self._res(resolution, "portrait")  # base = portrait reference
+            bw, bh = self._res(resolution, self._orient_for(model, "portrait"))  # base ref
             files, n = [], int(count)
             for i in range(n):
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
@@ -681,7 +719,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 raise gr.Error("Build or enhance a positive prompt on step 2 first.")
             gen_sd.clear_abort()  # don't inherit a stale abort flag from a prior run
             self._release_faceswap()
-            rw, rh = self._res(resolution, "portrait")  # reimagine the reference in portrait
+            rw, rh = self._res(resolution, self._orient_for(model, "portrait"))  # reimagine
             files, n = [], int(count)
             if backend == "native":
                 for i in range(n):
@@ -1133,7 +1171,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                     raw.append((None, spec))
                     continue
                 progress((i, len(P)), desc=f"Generating pose {i + 1}/{len(P)} ({ps.distance}/{ps.angle})")
-                pw, ph = self._res(resolution, ps.orientation)  # portrait/square/landscape
+                pw, ph = self._res(resolution, self._orient_for(model, ps.orientation))
                 p_pos = ", ".join(p for p in (base_clean, ps.description) if p)
                 p_neg = poses.pose_negative_for(ps.distance, neg)
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
@@ -1265,7 +1303,7 @@ class ReplicantCharLab(WAN2GPPlugin):
                 p_neg = poses.pose_negative_for(
                     (ps.distance if ps else spec.get("distance", "full")), neg)
                 orientation = ps.orientation if ps else spec.get("orientation", "portrait")
-                pw, ph = self._res(resolution, orientation)  # portrait/square/landscape
+                pw, ph = self._res(resolution, self._orient_for(model, orientation))
                 sd = int(seed) if int(seed) >= 0 else _rng.randint(0, 2**31 - 1)
                 img2img = choice in ("Cohesion (img2img)", "Re-Roll (img2img)")
                 if img2img and backend == "native":
